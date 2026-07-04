@@ -426,7 +426,9 @@ async def collect_for_case(
                 (account_id, external_id, text, timestamp, metadata)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (account_id, external_id)
-                DO NOTHING
+                DO UPDATE SET
+                    text     = EXCLUDED.text,
+                    metadata = EXCLUDED.metadata
                 """,
                 (
                     account_id,

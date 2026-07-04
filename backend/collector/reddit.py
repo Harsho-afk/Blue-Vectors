@@ -26,21 +26,9 @@ JSON_HEADERS = {
 
 # Self-hosted Redlib (Docker service name)
 SELF_HOSTED_REDLIB = os.environ.get("REDLIB_URL", "http://aria-redlib:8080")
+PUBLIC_REDLIB_URL = os.environ.get("REDLIB_PUBLIC_URL", "http://localhost:8080")
 
 PUBLIC_REDLIB_INSTANCES = [
-    "https://redlib.privacyredirect.com",
-    "https://redlib.lunar.icu",
-    "https://redlib.catsarch.com",
-    "https://redlib.perennialte.ch",
-    "https://rl.bloat.cat",
-    "https://redlib.seasi.dev",
-    "https://safereddit.com",
-    "https://redlib.freedit.eu",
-    "https://redlib.tux.pizza",
-    "https://redlib.nadeko.net",
-    "https://redlib.r4fo.com",
-    "https://redlib.private.coffee",
-    "https://redlib.ducks.party",
 ]
 
 
@@ -54,38 +42,86 @@ def is_bot_challenge(text: str) -> bool:
     )
 
 
+def normalize_url(href: str) -> str:
+    """Ensure a URL has a proper http(s) scheme."""
+    if href.startswith("http"):
+        return href
+    if href.startswith("//"):
+        return "https:" + href
+    return "https://" + href
+
+
+def is_image_url(url: str) -> bool:
+    """Return True if the URL points to an image by extension or known host."""
+    path = url.split("?")[0].lower()
+    return any(path.endswith(ext) for ext in IMAGE_EXTENSIONS) or any(
+        host in url for host in IMAGE_HOSTS
+    )
+
+
 def extract_image_urls(md_el) -> list:
-    """Extract and remove image links from a BeautifulSoup .md element."""
+    """
+    Extract image URLs from <a> and <img> tags inside a BeautifulSoup element.
+    Matching elements are decomposed (removed) from the tree so they don't
+    pollute the text extracted afterwards.
+    """
     if not md_el:
         return []
     urls = []
+    seen = set()
     to_remove = []
+
+    # <a href="..."> pointing to images
     for a in md_el.select("a"):
-        href = a.get("href", "")
+        href = a.get("href", "").strip()
         if not href:
             continue
-        is_image_ext = any(
-            href.split("?")[0].lower().endswith(ext) for ext in IMAGE_EXTENSIONS
-        )
-        is_image_host = any(host in href for host in IMAGE_HOSTS)
-        if is_image_ext or is_image_host:
-            if not href.startswith("http"):
-                href = "https:" + href if href.startswith("//") else "https://" + href
-            urls.append(href)
+        if is_image_url(href):
+            href = normalize_url(href)
+            if href not in seen:
+                seen.add(href)
+                urls.append(href)
             to_remove.append(a)
-    for a in to_remove:
-        a.decompose()
+
+    # inline <img src="...">
+    for img in md_el.select("img"):
+        src = img.get("src", "").strip()
+        if not src:
+            continue
+        src = normalize_url(src)
+        if src not in seen:
+            seen.add(src)
+            urls.append(src)
+        to_remove.append(img)
+
+    for el in to_remove:
+        el.decompose()
+
     return urls
 
 
 def get_thumbnail(thing_el) -> str:
+    """Return the thumbnail image URL for a post element, or empty string."""
     img = thing_el.select_one("a.thumbnail img")
     if not img:
         return ""
-    src = img.get("src", "")
-    if src and not src.startswith("http"):
+    src = img.get("src", "").strip()
+    if not src:
+        return ""
+    if not src.startswith("http"):
         src = "https:" + src if src.startswith("//") else ""
     return src
+
+
+def dedupe(lst: list) -> list:
+    """Return list with duplicates removed, preserving order."""
+    seen = set()
+    out = []
+    for item in lst:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 # SOURCE 1: Reddit JSON API
@@ -230,28 +266,40 @@ class RedditJSONCollector:
             if selftext and selftext not in ("[removed]", "[deleted]"):
                 text = (title + " " + selftext).strip()
 
-            # Image extraction
+            # ── Image extraction ──────────────────────────────────────────────
             images = []
+
+            # 1. Direct post URL (e.g. i.redd.it link or image upload)
             url = d.get("url", "")
-            if url and any(
-                url.split("?")[0].lower().endswith(ext) for ext in IMAGE_EXTENSIONS
-            ):
+            if url and is_image_url(url):
                 images.append(url)
+
+            # 2. Reddit preview images (decode &amp; entities)
             preview = d.get("preview", {})
             for img in preview.get("images", []):
                 src = img.get("source", {}).get("url", "").replace("&amp;", "&")
                 if src:
                     images.append(src)
+
+            # 3. Gallery images
+            media_metadata = d.get("media_metadata") or {}
+            for item in media_metadata.values():
+                if item.get("status") != "valid":
+                    continue
+                # 's' key holds the full-size source
+                s = item.get("s", {})
+                src = s.get("u", "") or s.get("gif", "")
+                src = src.replace("&amp;", "&")
+                if src:
+                    images.append(src)
+
+            # 4. Thumbnail — only when it's a real image URL
             thumbnail = d.get("thumbnail", "")
-            if thumbnail and thumbnail.startswith("http"):
+            if thumbnail and thumbnail.startswith("http") and is_image_url(thumbnail):
                 images.append(thumbnail)
-            # deduplicate while preserving order
-            seen = set()
-            deduped = []
-            for img in images:
-                if img not in seen:
-                    seen.add(img)
-                    deduped.append(img)
+
+            images = dedupe(images)
+            # ─────────────────────────────────────────────────────────────────
 
             permalink = d.get("permalink", "")
             post_url = ("https://reddit.com" + permalink) if permalink else ""
@@ -266,7 +314,7 @@ class RedditJSONCollector:
                         "subreddit": sub,
                         "score": d.get("score", 0),
                         "url": post_url,
-                        "images": deduped,
+                        "images": images,
                     },
                 )
             )
@@ -289,6 +337,14 @@ class RedditJSONCollector:
             if body in ("[removed]", "[deleted]"):
                 body = ""
 
+            # ── Image extraction from body_html ───────────────────────────────
+            images = []
+            body_html = d.get("body_html", "").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
+            if body_html:
+                soup = BeautifulSoup(body_html, "html.parser")
+                images = extract_image_urls(soup)
+            # ─────────────────────────────────────────────────────────────────
+
             permalink = d.get("permalink", "")
             post_url = ("https://reddit.com" + permalink) if permalink else ""
 
@@ -302,14 +358,14 @@ class RedditJSONCollector:
                         "subreddit": sub,
                         "score": d.get("score", 0),
                         "url": post_url,
-                        "images": [],
+                        "images": images,
                     },
                 )
             )
         return posts, subreddits
 
 
-# SOURCE 2 & 3: Redlib HTML (self-hosted + public)
+# SOURCE 2: Redlib HTML (self-hosted)
 class RedlibCollector:
     """
     Collects Reddit data by scraping a Redlib instance (HTML).
@@ -349,6 +405,20 @@ class RedlibCollector:
             return r.status_code == 200 and not is_bot_challenge(r.text)
         except Exception:
             return False
+
+    def resolve_url(self, src: str) -> str:
+        """
+        Turn a relative Redlib path into an absolute URL.
+        Uses PUBLIC_REDLIB_URL when the internal Docker hostname is detected.
+        """
+        if src.startswith("http"):
+            return src
+        base = self.base
+        if "aria-redlib" in base:
+            base = PUBLIC_REDLIB_URL
+        if src.startswith("/"):
+            return base + src
+        return src
 
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
         log.info(
@@ -429,9 +499,9 @@ class RedlibCollector:
 
         img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
         if img_el:
-            src = img_el.get("src", "")
+            src = img_el.get("src", "").strip()
             if src:
-                avatar = (self.base + src) if src.startswith("/") else src
+                avatar = self.resolve_url(src)
 
         return display_name, bio, karma, created_utc, avatar
 
@@ -455,12 +525,58 @@ class RedlibCollector:
             for item in items:
                 if fetched >= limit:
                     break
+
                 title_links = item.select(".post_title a")
                 title_el = title_links[-1] if title_links else None
                 body_el = item.select_one(".post_body")
                 created_el = item.select_one(".created")
                 sub_el = item.select_one(".post_subreddit")
                 score_el = item.select_one(".post_score")
+
+                # ── Image extraction ──────────────────────────────────────────
+                images = []
+
+                # Thumbnail from the post card
+                thumb = get_thumbnail(item)
+                if thumb:
+                    images.append(thumb)
+
+                # Images linked/embedded in the post body
+                if body_el:
+                    for img_url in extract_image_urls(body_el):
+                        resolved = self.resolve_url(img_url)
+                        if resolved not in images:
+                            images.append(resolved)
+
+                # Redlib renders submission images inside div.post_media_content
+                # as <svg><image href="/img/..."> — not a regular <img src>
+                media_content = item.select_one(".post_media_content")
+                if media_content:
+                    # SVG <image href="...">
+                    for svg_img in media_content.select("image"):
+                        src = svg_img.get("href", "").strip()
+                        if src:
+                            resolved = self.resolve_url(src)
+                            if resolved not in images:
+                                images.append(resolved)
+                    # fallback: regular <img src="..."> inside desc or elsewhere
+                    for img_tag in media_content.select("img"):
+                        src = img_tag.get("src", "").strip()
+                        if src:
+                            resolved = self.resolve_url(src)
+                            if resolved not in images:
+                                images.append(resolved)
+                    # fallback: <a class="post_media_image" href="..."> direct link
+                    a_tag = media_content.select_one("a.post_media_image")
+                    if a_tag:
+                        href = a_tag.get("href", "").strip()
+                        if href and is_image_url(href):
+                            resolved = self.resolve_url(href)
+                            if resolved not in images:
+                                images.append(resolved)
+
+                images = dedupe(images)
+                # ─────────────────────────────────────────────────────────────
 
                 text, url = "", ""
                 if title_el:
@@ -469,7 +585,7 @@ class RedlibCollector:
                     if raw_href.startswith("/"):
                         url = "https://reddit.com" + raw_href
                 if body_el:
-                    bt = body_el.text.strip()
+                    bt = body_el.get_text(separator=" ").strip()
                     if bt:
                         text = (text + " " + bt).strip()
 
@@ -511,7 +627,7 @@ class RedlibCollector:
                             "subreddit": sub,
                             "score": score,
                             "url": url,
-                            "images": [],
+                            "images": images,
                         },
                     )
                 )
@@ -545,24 +661,41 @@ class RedlibCollector:
             for item in items:
                 if fetched >= limit:
                     break
+
                 body_el = item.select_one(".comment_body")
                 created_el = item.select_one(".created")
                 sub_el = item.select_one(".comment_subreddit")
                 score_el = item.select_one(".comment_score")
                 link_el = item.select_one(".comment_link")
 
-                raw_text = body_el.get_text(separator="\n").strip() if body_el else ""
+                # ── Image extraction ──────────────────────────────────────────
+                # Redlib renders comment images as:
+                #   p.comment_body > div.md > figure > a > img
+                # Directly select every <img> inside a <figure> in the comment
+                # and resolve the src. Done BEFORE get_text() so nodes are present.
                 images = []
+                for img_tag in item.select("figure img"):
+                    src = img_tag.get("src", "").strip()
+                    if src:
+                        resolved = self.resolve_url(src)
+                        if resolved not in images:
+                            images.append(resolved)
+
+                # get_text after image collection
+                raw_text = body_el.get_text(separator="\n").strip() if body_el else ""
                 clean_lines = []
                 for line in raw_text.splitlines():
                     stripped = line.strip()
-                    if stripped.startswith("/preview/pre/") or stripped.startswith(
-                        "/img/"
-                    ):
-                        images.append(self.base + stripped)
+                    if stripped.startswith("/preview/pre/") or stripped.startswith("/img/"):
+                        resolved = self.resolve_url(stripped)
+                        if resolved not in images:
+                            images.append(resolved)
                     else:
                         clean_lines.append(line)
                 text = "\n".join(clean_lines).strip()
+
+                images = dedupe(images)
+                # ─────────────────────────────────────────────────────────────
 
                 url = ""
                 if link_el:
@@ -624,379 +757,32 @@ class RedlibCollector:
         return posts, subreddits
 
 
-# SOURCE 4: old.reddit.com HTML
-class OldRedditCollector:
-    """
-    Collects Reddit data by scraping old.reddit.com HTML.
-    Last-resort fallback — no avatar, but very stable HTML structure.
-    """
-
-    BASE = "https://old.reddit.com"
-
-    def fetch(self, path: str) -> httpx.Response:
-        r = httpx.get(
-            f"{self.BASE}{path}",
-            headers=BROWSER_HEADERS,
-            timeout=15,
-            follow_redirects=True,
-        )
-        if r.status_code != 200:
-            raise ValueError(f"old.reddit.com: HTTP {r.status_code} for {path}")
-        if len(r.text) < 3000:
-            raise ValueError(f"old.reddit.com: response too short for {path}")
-        if is_bot_challenge(r.text):
-            raise ValueError(f"old.reddit.com: anti-bot challenge for {path}")
-        return r
-
-    def collect(self, username: str, limit: int = 100) -> AccountProfile:
-        log.info(
-            "Reddit [4/4 old.reddit.com]: collecting u/%s (limit=%d)", username, limit
-        )
-
-        profile_r = self.fetch(f"/user/{username}")
-        soup = BeautifulSoup(profile_r.text, "html.parser")
-
-        display_name, bio, karma, created_utc = self.parse_profile(soup)
-        avatar = self.fetch_avatar(username)
-
-        sub_posts, sub_subs = self.parse_submissions(username, limit)
-        com_posts, com_subs = self.parse_comments(username, limit)
-
-        all_posts = sub_posts + com_posts
-        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
-        all_subs = sub_subs | com_subs
-
-        log.info(
-            "Reddit [old.reddit.com] ✓: u/%s — %d total posts, %d subreddits",
-            username,
-            len(all_posts),
-            len(all_subs),
-        )
-
-        return AccountProfile(
-            platform="reddit",
-            username=username,
-            display_name=display_name or username,
-            bio=bio,
-            location="",
-            profile_image_url=avatar,
-            created_utc=created_utc,
-            posts=all_posts,
-            subreddits=sorted(s for s in all_subs if s),
-            karma=karma,
-        )
-
-    def fetch_avatar(self, username: str) -> str:
-        """Try Reddit OAuth then public Redlib instances for avatar."""
-        client_id = os.environ.get("REDDIT_CLIENT_ID", "")
-        client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
-        if client_id and client_secret:
-            try:
-                token_r = httpx.post(
-                    "https://www.reddit.com/api/v1/access_token",
-                    auth=(client_id, client_secret),
-                    data={"grant_type": "client_credentials"},
-                    headers={"User-Agent": "ARIA-OSINT/1.0"},
-                    timeout=10,
-                )
-                if token_r.status_code == 200:
-                    token = token_r.json().get("access_token", "")
-                    if token:
-                        api_r = httpx.get(
-                            f"https://oauth.reddit.com/user/{username}/about",
-                            headers={
-                                "Authorization": f"Bearer {token}",
-                                "User-Agent": "ARIA-OSINT/1.0",
-                            },
-                            timeout=10,
-                        )
-                        if api_r.status_code == 200:
-                            d = api_r.json().get("data", {})
-                            av = d.get("snoovatar_img") or d.get("icon_img") or ""
-                            if av and "?" in av:
-                                av = av.split("?")[0]
-                            if av:
-                                return av
-            except Exception as exc:
-                log.debug("old.reddit.com: OAuth avatar failed: %s", exc)
-
-        # Try public Redlib for avatar
-        for base in PUBLIC_REDLIB_INSTANCES[:3]:
-            try:
-                r = httpx.get(
-                    f"{base}/user/{username}",
-                    headers=BROWSER_HEADERS,
-                    timeout=6,
-                    follow_redirects=True,
-                )
-                if r.status_code != 200 or len(r.text) < 3000:
-                    continue
-                if is_bot_challenge(r.text):
-                    continue
-                soup = BeautifulSoup(r.text, "html.parser")
-                img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
-                if img_el:
-                    src = img_el.get("src", "")
-                    if src:
-                        return (base + src) if src.startswith("/") else src
-            except Exception:
-                continue
-
-        log.debug("old.reddit.com: avatar unavailable for u/%s", username)
-        return ""
-
-    def parse_profile(self, soup) -> tuple:
-        display_name, bio, karma, created_utc = "", "", None, None
-        titlebox = soup.select_one(".titlebox")
-        if not titlebox:
-            return display_name, bio, karma, created_utc
-
-        h1 = titlebox.select_one("h1")
-        if h1:
-            name_text = h1.find(string=True, recursive=False)
-            if name_text:
-                display_name = name_text.strip()
-
-        bio_el = titlebox.select_one(".md")
-        if bio_el:
-            bio = bio_el.get_text(separator=" ").strip()
-
-        karma_els = titlebox.select("span.karma")
-        pk, ck = 0, 0
-        if len(karma_els) >= 1:
-            try:
-                pk = int(karma_els[0].text.strip().replace(",", ""))
-            except Exception:
-                pass
-        if len(karma_els) >= 2:
-            try:
-                ck = int(karma_els[1].text.strip().replace(",", ""))
-            except Exception:
-                pass
-        karma = pk + ck
-
-        age_el = titlebox.select_one(".age time")
-        if age_el:
-            dt_str = age_el.get("datetime", "")
-            if dt_str:
-                try:
-                    created_utc = datetime.fromisoformat(dt_str).timestamp()
-                except Exception:
-                    pass
-
-        return display_name, bio, karma, created_utc
-
-    def parse_submissions(self, username: str, limit: int) -> tuple:
-        posts, subreddits, after, fetched = [], set(), "", 0
-        page_size = min(25, limit)
-        while fetched < limit:
-            path = f"/user/{username}/submitted?limit={page_size}"
-            if after:
-                path += f"&after={after}"
-            try:
-                r = self.fetch(path)
-                soup = BeautifulSoup(r.text, "html.parser")
-            except Exception as exc:
-                log.warning("old.reddit.com: submissions page failed — %s", exc)
-                break
-            items = soup.select(".thing[data-type='link']")
-            if not items:
-                break
-            for item in items:
-                if fetched >= limit:
-                    break
-                title_el = item.select_one("a.title")
-                body_el = item.select_one(".usertext-body .md")
-                time_el = item.select_one("time")
-                score_el = item.select_one(".score.unvoted")
-
-                text = title_el.text.strip() if title_el else ""
-                permalink = item.get("data-permalink", "")
-                url = ("https://reddit.com" + permalink) if permalink else ""
-                body_images = extract_image_urls(body_el)
-                if body_el:
-                    bt = body_el.get_text(separator=" ").strip()
-                    if bt:
-                        text = (text + " " + bt).strip()
-
-                ts = 0.0
-                if time_el:
-                    dt_str = time_el.get("datetime", "")
-                    if dt_str:
-                        try:
-                            ts = datetime.fromisoformat(dt_str).timestamp()
-                        except Exception:
-                            pass
-
-                sub = item.get("data-subreddit", "")
-                if sub and not sub.startswith("u_"):
-                    subreddits.add(sub)
-                elif sub.startswith("u_"):
-                    sub = ""
-
-                score = 0
-                if score_el:
-                    try:
-                        score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception:
-                        pass
-
-                images = []
-                thumb = get_thumbnail(item)
-                if thumb:
-                    images.append(thumb)
-                images.extend(body_images)
-                data_url = item.get("data-url", "")
-                if data_url and any(
-                    data_url.split("?")[0].lower().endswith(ext)
-                    for ext in IMAGE_EXTENSIONS
-                ):
-                    if not data_url.startswith("http"):
-                        data_url = "https://reddit.com" + data_url
-                    images.append(data_url)
-
-                posts.append(
-                    Post(
-                        external_id=f"submission:{url or ts}",
-                        text=text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "submission",
-                            "subreddit": sub,
-                            "score": score,
-                            "url": url,
-                            "images": images,
-                        },
-                    )
-                )
-                fetched += 1
-
-            next_el = soup.select_one(".next-button a")
-            if next_el:
-                qs = parse_qs(urlparse(next_el.get("href", "")).query)
-                after = qs.get("after", [""])[0]
-            else:
-                break
-            if not after:
-                break
-        return posts, subreddits
-
-    def parse_comments(self, username: str, limit: int) -> tuple:
-        posts, subreddits, after, fetched = [], set(), "", 0
-        page_size = min(25, limit)
-        while fetched < limit:
-            path = f"/user/{username}/comments?limit={page_size}"
-            if after:
-                path += f"&after={after}"
-            try:
-                r = self.fetch(path)
-                soup = BeautifulSoup(r.text, "html.parser")
-            except Exception as exc:
-                log.warning("old.reddit.com: comments page failed — %s", exc)
-                break
-            items = soup.select(".thing[data-type='comment']")
-            if not items:
-                break
-            for item in items:
-                if fetched >= limit:
-                    break
-                body_el = item.select_one(".md")
-                time_el = item.select_one("time")
-                score_el = item.select_one(".score.unvoted")
-                link_el = item.select_one("a.bylink")
-
-                images = extract_image_urls(body_el)
-                text = body_el.get_text(separator="\n").strip() if body_el else ""
-
-                url = ""
-                if link_el:
-                    raw = link_el.get("href", "")
-                    if raw:
-                        url = raw.split("?")[0].replace("old.reddit.com", "reddit.com")
-
-                ts = 0.0
-                if time_el:
-                    dt_str = time_el.get("datetime", "")
-                    if dt_str:
-                        try:
-                            ts = datetime.fromisoformat(dt_str).timestamp()
-                        except Exception:
-                            pass
-
-                sub = item.get("data-subreddit", "")
-                if sub and not sub.startswith("u_"):
-                    subreddits.add(sub)
-                elif sub.startswith("u_"):
-                    sub = ""
-
-                score = 0
-                if score_el:
-                    try:
-                        score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception:
-                        pass
-
-                posts.append(
-                    Post(
-                        external_id=f"comment:{url or ts}",
-                        text=text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "comment",
-                            "subreddit": sub,
-                            "score": score,
-                            "url": url,
-                            "images": images,
-                        },
-                    )
-                )
-                fetched += 1
-
-            next_el = soup.select_one(".next-button a")
-            if next_el:
-                qs = parse_qs(urlparse(next_el.get("href", "")).query)
-                after = qs.get("after", [""])[0]
-            else:
-                break
-            if not after:
-                break
-        return posts, subreddits
-
-
 # RedditCollector — priority waterfall
 class RedditCollector:
-    """
-    Tries sources in priority order and returns on first success:
-      1. Reddit JSON API   (reddit.com/user/<u>/*.json)
-      2. Self-hosted Redlib (aria-redlib:8080)
-      3. Public Redlib instances (tried in order until one works)
-      4. old.reddit.com   (HTML scrape, last resort)
-    """
-
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
         errors = []
 
-        # ── Priority 1: Reddit JSON API ──────────────────
-        try:
-            return RedditJSONCollector().collect(username, limit=limit)
-        except Exception as exc:
-            log.warning("Reddit [1/4 JSON API] failed for u/%s: %s", username, exc)
-            errors.append(f"JSON API: {exc}")
-
-        # ── Priority 2: Self-hosted Redlib ───────────────
+        # ── Priority 1: Self-hosted Redlib ───────────────
         self_hosted = RedlibCollector(SELF_HOSTED_REDLIB, label="self-hosted")
         try:
             if self_hosted.probe():
                 return self_hosted.collect(username, limit=limit)
             else:
                 msg = f"self-hosted Redlib at {SELF_HOSTED_REDLIB} not reachable"
-                log.info("Reddit [2/4 Redlib/self-hosted]: %s", msg)
+                log.info("Reddit [1/3 Redlib/self-hosted]: %s", msg)
                 errors.append(msg)
         except Exception as exc:
             log.warning(
-                "Reddit [2/4 Redlib/self-hosted] failed for u/%s: %s", username, exc
+                "Reddit [1/3 Redlib/self-hosted] failed for u/%s: %s", username, exc
             )
             errors.append(f"self-hosted Redlib: {exc}")
+
+        # ── Priority 2: Reddit JSON API ──────────────────
+        try:
+            return RedditJSONCollector().collect(username, limit=limit)
+        except Exception as exc:
+            log.warning("Reddit [2/3 JSON API] failed for u/%s: %s", username, exc)
+            errors.append(f"JSON API: {exc}")
 
         # ── Priority 3: Public Redlib instances ──────────
         for idx, instance_url in enumerate(PUBLIC_REDLIB_INSTANCES, start=1):
@@ -1005,7 +791,7 @@ class RedditCollector:
             try:
                 if not collector.probe():
                     log.debug(
-                        "Reddit [3/4 Redlib/%s]: %s not reachable, skipping",
+                        "Reddit [3/3 Redlib/%s]: %s not reachable, skipping",
                         label,
                         instance_url,
                     )
@@ -1013,21 +799,12 @@ class RedditCollector:
                 return collector.collect(username, limit=limit)
             except Exception as exc:
                 log.warning(
-                    "Reddit [3/4 Redlib/%s] failed for u/%s: %s",
+                    "Reddit [3/3 Redlib/%s] failed for u/%s: %s",
                     label,
                     username,
                     exc,
                 )
                 errors.append(f"Redlib {instance_url}: {exc}")
-
-        # ── Priority 4: old.reddit.com ───────────────────
-        try:
-            return OldRedditCollector().collect(username, limit=limit)
-        except Exception as exc:
-            log.warning(
-                "Reddit [4/4 old.reddit.com] failed for u/%s: %s", username, exc
-            )
-            errors.append(f"old.reddit.com: {exc}")
 
         raise ValueError(
             f"Reddit user '{username}' could not be collected — all sources failed:\n"
