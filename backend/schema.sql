@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     location          TEXT,
     created_at        TIMESTAMPTZ,
     profile_image_url TEXT,
+    image_embedding   JSONB,
     karma             INTEGER,
     follower_count    INTEGER,
     following_count   INTEGER,
@@ -137,3 +138,16 @@ ON insights(case_id);
 
 CREATE INDEX IF NOT EXISTS insights_account_id_idx
 ON insights(account_id);
+
+-- 9. intelligence_reports (Stage 2B/2C Analyst LLM output)
+CREATE TABLE IF NOT EXISTS intelligence_reports (
+    id          SERIAL PRIMARY KEY,
+    case_id     INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    narrative   TEXT NOT NULL,
+    claims      JSONB NOT NULL,
+    label       TEXT NOT NULL DEFAULT 'AI-synthesized, citation-linked',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS intelligence_reports_case_id_idx
+ON intelligence_reports(case_id);

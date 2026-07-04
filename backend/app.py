@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes_auth import router as auth_router
 from routes_cases import router as cases_router
 from routes_osint import router as osint_router
+from routes_run import router as run_router
 from auth import get_current_user
 from collector.base import collect_async
 
@@ -29,6 +30,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(cases_router)
 app.include_router(osint_router)
+app.include_router(run_router)
 
 
 # ── Existing routes ───────────────────────────────────────────────────────────

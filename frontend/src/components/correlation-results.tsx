@@ -31,6 +31,7 @@ interface ShapData {
   username_raw?: number | null
   username_distinctiveness?: number | null
   bio_score?: number | null
+  profile_image_score?: number | null
   temporal_score?: number | null
   community_score?: number | null
   stylometry_score?: number | null
@@ -76,6 +77,7 @@ function bandVariant(band: string) {
 const SIGNAL_DEFS = [
   { key: 'username_score', label: 'Username Match' },
   { key: 'bio_score', label: 'Bio Similarity' },
+  { key: 'profile_image_score', label: 'Profile Pic Match' },
   { key: 'temporal_score', label: 'Temporal Pattern' },
   { key: 'community_score', label: 'Community Overlap' },
   { key: 'stylometry_score', label: 'Writing Style' },
@@ -166,6 +168,16 @@ function ResultRow({
         </div>
 
         <div className='flex shrink-0 items-center gap-3'>
+          {shap.evidence_type === 'hard_link' && (
+            <Badge className='border border-emerald-500/30 bg-emerald-500/15 text-xs text-emerald-600 dark:text-emerald-400'>
+              Hard Link
+            </Badge>
+          )}
+          {shap.evidence_type === 'circumstantial_convergence' && (
+            <Badge className='border border-amber-500/30 bg-amber-500/15 text-xs text-amber-600 dark:text-amber-400'>
+              Circumstantial
+            </Badge>
+          )}
           <div className='flex items-center gap-2'>
             <div className='w-[100px]'>
               <div className='relative h-2 w-full overflow-hidden rounded-full bg-muted'>

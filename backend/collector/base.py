@@ -22,18 +22,30 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
         else None
     )
 
+    # Compute CLIP embedding while the profile image URL is still live
+    image_embedding = None
+    if profile.profile_image_url:
+        try:
+            from features import compute_image_embedding
+            image_embedding = compute_image_embedding(profile.profile_image_url)
+            if image_embedding:
+                log.info("CLIP embedding computed for %s/%s", profile.platform, profile.username)
+        except Exception as e:
+            log.warning("CLIP embedding failed for %s/%s: %s", profile.platform, profile.username, e)
+
     cur.execute(
         """
         INSERT INTO accounts
             (case_id, platform, username, display_name, bio, location, created_at,
-             profile_image_url, karma, follower_count, following_count)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             profile_image_url, image_embedding, karma, follower_count, following_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (case_id, platform, username) DO UPDATE SET
             display_name      = EXCLUDED.display_name,
             bio               = EXCLUDED.bio,
             location          = EXCLUDED.location,
             created_at        = EXCLUDED.created_at,
             profile_image_url = EXCLUDED.profile_image_url,
+            image_embedding   = EXCLUDED.image_embedding,
             karma             = EXCLUDED.karma,
             follower_count    = EXCLUDED.follower_count,
             following_count   = EXCLUDED.following_count
@@ -48,6 +60,7 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
             profile.location,
             created_at_dt,
             profile.profile_image_url,
+            json.dumps(image_embedding) if image_embedding else None,
             profile.karma,
             profile.follower_count,
             profile.following_count,

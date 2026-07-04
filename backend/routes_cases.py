@@ -248,6 +248,20 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
             (case_id,),
         )
         osint_rows = [dict(row) for row in cur.fetchall()]
+
+        # Insights
+        cur.execute(
+            "SELECT id, account_id, category, claim, confidence, evidence, created_at FROM insights WHERE case_id = %s ORDER BY id",
+            (case_id,),
+        )
+        insight_rows = [dict(row) for row in cur.fetchall()]
+
+        # Intelligence report (latest)
+        cur.execute(
+            "SELECT id, narrative, claims, label, created_at FROM intelligence_reports WHERE case_id = %s ORDER BY created_at DESC LIMIT 1",
+            (case_id,),
+        )
+        intel_row = cur.fetchone()
     finally:
         conn.close()
 
@@ -323,6 +337,28 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
             }
             for o in osint_rows
         ],
+        "insights": [
+            {
+                "id": ins["id"],
+                "account_id": ins["account_id"],
+                "category": ins["category"],
+                "claim": ins["claim"],
+                "confidence": ins["confidence"],
+                "evidence": json.loads(ins["evidence"]) if isinstance(ins["evidence"], str) else ins["evidence"],
+                "created_at": str(ins["created_at"]),
+            }
+            for ins in insight_rows
+        ],
+        "intelligence": (
+            {
+                "id": intel_row["id"],
+                "narrative": intel_row["narrative"],
+                "claims": json.loads(intel_row["claims"]) if isinstance(intel_row["claims"], str) else intel_row["claims"],
+                "label": intel_row["label"],
+                "created_at": str(intel_row["created_at"]),
+            }
+            if intel_row else None
+        ),
     }
 
 
@@ -341,6 +377,37 @@ def delete_case(case_id: int, current_user: dict = Depends(get_current_user)):
         conn.commit()
     finally:
         conn.close()
+
+
+class CaseStatusUpdate(BaseModel):
+    status: Literal["open", "closed"]
+
+
+@router.patch("/{case_id}/status")
+def update_case_status(
+    case_id: int,
+    body: CaseStatusUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Close or reopen a case."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        if body.status == "closed":
+            cur.execute(
+                "UPDATE cases SET status = 'closed', closed_at = NOW() WHERE id = %s",
+                (case_id,),
+            )
+        else:
+            cur.execute(
+                "UPDATE cases SET status = 'open', closed_at = NULL WHERE id = %s",
+                (case_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": body.status}
 
 
 @router.post("/{case_id}/identifiers", status_code=status.HTTP_201_CREATED)
@@ -506,6 +573,71 @@ def get_correlation_results(case_id: int, current_user: dict = Depends(get_curre
         conn.close()
 
     return {"results": results}
+
+
+@router.post("/{case_id}/intelligence")
+def run_intelligence(case_id: int, current_user: dict = Depends(get_current_user)):
+    """
+    Generate an AI intelligence briefing from the case's insights.
+    Runs the Analyst LLM + citation check, stores the result.
+    """
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+    finally:
+        conn.close()
+
+    conn = get_db_conn()
+    try:
+        from llm.analyst import generate_briefing
+        from llm.citation_check import validate_citations, save_report
+
+        analyst_output = generate_briefing(conn, case_id)
+        checked = validate_citations(conn, case_id, analyst_output)
+        report_id = save_report(conn, case_id, checked)
+
+        return {
+            "report_id": report_id,
+            "narrative": checked["narrative"],
+            "claims": checked["claims"],
+            "label": checked["label"],
+            "citation_stats": checked["citation_stats"],
+            "model": analyst_output.get("model"),
+        }
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/{case_id}/intelligence")
+def get_intelligence(case_id: int, current_user: dict = Depends(get_current_user)):
+    """Retrieve the stored intelligence report for a case."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, case_id, narrative, claims, label, created_at "
+            "FROM intelligence_reports WHERE case_id = %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (case_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return {"report": None}
+
+    r = dict(row)
+    if isinstance(r["claims"], str):
+        r["claims"] = json.loads(r["claims"])
+    r["created_at"] = str(r["created_at"]) if r["created_at"] else None
+
+    return {"report": r}
 
 
 @router.post("/{case_id}/collect")

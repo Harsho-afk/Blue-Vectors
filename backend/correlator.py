@@ -18,6 +18,7 @@ from itertools import combinations
 from features import (
     username_similarity,
     bio_similarity,
+    profile_image_similarity,
     temporal_similarity,
     community_overlap,
     stylometry_similarity,
@@ -29,11 +30,12 @@ log = logging.getLogger("aria.correlator")
 TIER1_FLOOR = 0.80
 
 WEIGHTS = {
-    "username": 0.25,
-    "bio": 0.20,
-    "temporal": 0.15,
-    "community": 0.15,
-    "stylometry": 0.15,
+    "username": 0.22,
+    "bio": 0.16,
+    "profile_image": 0.15,
+    "temporal": 0.13,
+    "community": 0.12,
+    "stylometry": 0.12,
     "geo": 0.10,
 }
 
@@ -239,6 +241,20 @@ def correlate_pair(
         account_b.get("bio"),
     )
 
+    emb_a = account_a.get("image_embedding")
+    emb_b = account_b.get("image_embedding")
+    if isinstance(emb_a, str):
+        emb_a = json.loads(emb_a)
+    if isinstance(emb_b, str):
+        emb_b = json.loads(emb_b)
+
+    pi_score = profile_image_similarity(
+        account_a.get("profile_image_url"),
+        account_b.get("profile_image_url"),
+        embedding_a=emb_a,
+        embedding_b=emb_b,
+    )
+
     t_score = temporal_similarity(posts_a, posts_b)
     c_score = community_overlap(posts_a, posts_b)
     s_score = stylometry_similarity(posts_a, posts_b)
@@ -250,6 +266,7 @@ def correlate_pair(
     signals: dict[str, float | None] = {
         "username": round(u_score, 4),
         "bio": round(b_score, 4) if b_score is not None else None,
+        "profile_image": round(pi_score, 4) if pi_score is not None else None,
         "temporal": round(t_score, 4) if t_score is not None else None,
         "community": round(c_score, 4) if c_score is not None else None,
         "stylometry": round(s_score, 4) if s_score is not None else None,
@@ -310,6 +327,7 @@ def correlate_pair(
         "username_raw": round(u_raw, 4),
         "username_distinctiveness": round(avg_dist, 4),
         "bio_score": signals["bio"],
+        "profile_image_score": signals["profile_image"],
         "temporal_score": signals["temporal"],
         "community_score": signals["community"],
         "stylometry_score": signals["stylometry"],
@@ -332,6 +350,7 @@ def _build_shap_data(result: dict) -> dict:
         "username_raw": result["username_raw"],
         "username_distinctiveness": result["username_distinctiveness"],
         "bio_score": result["bio_score"],
+        "profile_image_score": result["profile_image_score"],
         "temporal_score": result["temporal_score"],
         "community_score": result["community_score"],
         "stylometry_score": result["stylometry_score"],
@@ -350,13 +369,13 @@ def _load_accounts_and_posts(cur, case_id: int, account_ids: list[int] | None = 
     if account_ids:
         placeholders = ",".join(["%s"] * len(account_ids))
         cur.execute(
-            f"SELECT id, case_id, platform, username, display_name, bio, location "
+            f"SELECT id, case_id, platform, username, display_name, bio, location, profile_image_url, image_embedding "
             f"FROM accounts WHERE case_id = %s AND id IN ({placeholders})",
             (case_id, *account_ids),
         )
     else:
         cur.execute(
-            "SELECT id, case_id, platform, username, display_name, bio, location "
+            "SELECT id, case_id, platform, username, display_name, bio, location, profile_image_url, image_embedding "
             "FROM accounts WHERE case_id = %s",
             (case_id,),
         )

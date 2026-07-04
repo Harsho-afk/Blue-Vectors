@@ -508,3 +508,4 @@ By the end of development, the system should allow:
 8. System generates an investigation report.
 
 Every feature should contribute directly to achieving this workflow.
+

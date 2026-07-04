@@ -11,6 +11,8 @@ email-validator
 maigret
 rapidfuzz>=3.0
 sentence-transformers>=2.2
+Pillow>=9.0
+imagehash>=4.3
 scipy>=1.10
 numpy>=1.24
 scikit-learn>=1.3
@@ -18,3 +20,4 @@ instagrapi[curl]
 phonenumbers
 telethon
 duckduckgo-search
+google-genai>=1.0

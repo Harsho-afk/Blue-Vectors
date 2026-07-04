@@ -2,15 +2,20 @@ import { useCallback, useEffect, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   Activity,
+  Archive,
   ArrowLeft,
+  Bot,
   Calendar,
   Check,
   ChevronDown,
   Download,
   ExternalLink,
+  FolderOpen,
   GitMerge,
+  Lightbulb,
   Loader2,
   MapPin,
+  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -47,9 +52,22 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { ConfigDrawer } from '@/components/config-drawer'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { CorrelationResults } from '@/components/correlation-results'
+import { EvidencePanel, type Insight } from '@/components/evidence-panel'
+import {
+  IntelligenceBriefing,
+  type IntelligenceReport,
+} from '@/components/intelligence-briefing'
 import { Header } from '@/components/layout/header'
 import { Input } from '@/components/ui/input'
+import { InvestigationRunner } from '@/components/investigation-runner'
 import { Main } from '@/components/layout/main'
 import { OsintPanel } from '@/components/osint-panel'
 import { ProfileDropdown } from '@/components/profile-dropdown'
@@ -218,6 +236,10 @@ function CaseDetail() {
   const [correlationResults, setCorrelationResults] = useState<
     CorrelationResult[]
   >([])
+  const [insights, setInsights] = useState<Insight[]>([])
+  const [intelligence, setIntelligence] = useState<IntelligenceReport | null>(
+    null
+  )
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -260,6 +282,8 @@ function CaseDetail() {
         setCaseData(data.case)
         setIdentifiers(data.identifiers || [])
         setAccounts(data.accounts || [])
+        setInsights(data.insights || [])
+        setIntelligence(data.intelligence || null)
       })
       .catch((e) => setError(e.message))
       .finally(() => setIsLoading(false))
@@ -405,6 +429,27 @@ function CaseDetail() {
       navigate({ to: '/cases' })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete case')
+    }
+  }
+
+  const handleToggleStatus = async () => {
+    if (!caseData) return
+    const newStatus = caseData.status === 'open' ? 'closed' : 'open'
+    setError(null)
+    try {
+      const res = await fetch(`${API}/api/cases/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (!res.ok) {
+        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        throw new Error(err)
+      }
+      setCaseData((prev) => prev ? { ...prev, status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : prev)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update case status')
     }
   }
 
@@ -605,34 +650,74 @@ function CaseDetail() {
               </div>
             </div>
 
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant='destructive' size='sm'>
-                  <Trash2 className='h-4 w-4' />
-                  Delete Case
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete this case?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will permanently delete &quot;{caseData.title}&quot; and
-                    all associated data including identifiers, collected
-                    accounts, posts, and correlation results. This action cannot
-                    be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDeleteCase}
-                    className='bg-destructive text-white hover:bg-destructive/90'
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <div className='flex items-center gap-2'>
+              <Button
+                variant={caseData.status === 'open' ? 'outline' : 'default'}
+                size='sm'
+                onClick={handleToggleStatus}
+              >
+                {caseData.status === 'open' ? (
+                  <>
+                    <Archive className='h-4 w-4' />
+                    Close Case
+                  </>
+                ) : (
+                  <>
+                    <FolderOpen className='h-4 w-4' />
+                    Reopen Case
+                  </>
+                )}
+              </Button>
+
+              <AlertDialog>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant='ghost' size='icon' className='h-8 w-8'>
+                      <MoreHorizontal className='h-4 w-4' />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align='end'>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        fetchCase()
+                        fetchResults()
+                      }}
+                    >
+                      <RefreshCw className='h-4 w-4' />
+                      Refresh
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <AlertDialogTrigger asChild>
+                      <DropdownMenuItem className='text-destructive focus:text-destructive'>
+                        <Trash2 className='h-4 w-4' />
+                        Delete Case
+                      </DropdownMenuItem>
+                    </AlertDialogTrigger>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this case?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete &quot;{caseData.title}&quot; and
+                      all associated data including identifiers, collected
+                      accounts, posts, and correlation results. This action cannot
+                      be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDeleteCase}
+                      className='bg-destructive text-white hover:bg-destructive/90'
+                    >
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
         </div>
 
@@ -650,6 +735,21 @@ function CaseDetail() {
             </Button>
           </div>
         )}
+
+        {/* ── Investigation Runner ── */}
+        <div className='mb-4'>
+          <InvestigationRunner
+            caseId={id}
+            hasIdentifiers={identifiers.length > 0}
+            onComplete={() => {
+              setCorrelationResults([])
+              setInsights([])
+              setIntelligence(null)
+              fetchCase()
+              fetchResults()
+            }}
+          />
+        </div>
 
         {/* ── Tabs ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -673,6 +773,15 @@ function CaseDetail() {
                 Correlation
                 {correlationResults.length > 0 &&
                   ` (${correlationResults.length})`}
+              </TabsTrigger>
+              <TabsTrigger value='insights'>
+                <Lightbulb className='h-4 w-4' />
+                Insights
+                {insights.length > 0 && ` (${insights.length})`}
+              </TabsTrigger>
+              <TabsTrigger value='intelligence'>
+                <Bot className='h-4 w-4' />
+                Intelligence
               </TabsTrigger>
             </TabsList>
           </div>
@@ -1164,6 +1273,21 @@ function CaseDetail() {
               accounts={accounts}
               isCorrelating={isCorrelating}
               onCorrelate={handleCorrelate}
+            />
+          </TabsContent>
+
+          {/* ── Insights Tab ── */}
+          <TabsContent value='insights'>
+            <EvidencePanel insights={insights} accounts={accounts} />
+          </TabsContent>
+
+          {/* ── Intelligence Tab ── */}
+          <TabsContent value='intelligence'>
+            <IntelligenceBriefing
+              caseId={id}
+              intelligence={intelligence}
+              insights={insights}
+              onGenerated={() => fetchCase()}
             />
           </TabsContent>
         </Tabs>
