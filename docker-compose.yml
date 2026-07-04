@@ -35,6 +35,7 @@ services:
             retries: 3
 
     wa-sidecar:
+        hostname: wa-sidecar-fixed
         build:
             context: ./wa_sidecar
             dockerfile: Dockerfile
