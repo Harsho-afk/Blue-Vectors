@@ -6,14 +6,10 @@ import {
   Loader2,
   Zap,
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
   SelectContent,
@@ -21,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
 
 interface ShapData {
   confidence_pct?: number
@@ -83,6 +78,128 @@ const SIGNAL_DEFS = [
   { key: 'stylometry_score', label: 'Writing Style' },
   { key: 'geo_agreement', label: 'Geo Agreement' },
 ] as const
+
+const RADAR_SIGNAL_DEFS = [
+  { key: 'username_score', label: 'Username' },
+  { key: 'bio_score', label: 'Bio' },
+  { key: 'profile_image_score', label: 'Profile pic' },
+  { key: 'temporal_score', label: 'Temporal' },
+  { key: 'community_score', label: 'Community' },
+  { key: 'stylometry_score', label: 'Writing' },
+  { key: 'geo_agreement', label: 'Geo' },
+] as const
+
+function toPoint(index: number, total: number, radius: number) {
+  const angle = (Math.PI * 2 * index) / total - Math.PI / 2
+  return {
+    x: 160 + Math.cos(angle) * radius,
+    y: 145 + Math.sin(angle) * radius,
+  }
+}
+
+function SignalRadar({ shap }: { shap: ShapData }) {
+  const maxRadius = 92
+  const rings = [0.25, 0.5, 0.75, 1]
+  const chartPoints = RADAR_SIGNAL_DEFS.map(({ key }, index) => {
+    const raw = shap[key]
+    const score = raw == null ? 0 : Math.max(0, Math.min(1, raw))
+    return toPoint(index, RADAR_SIGNAL_DEFS.length, score * maxRadius)
+  })
+  const polygon = chartPoints.map((point) => `${point.x},${point.y}`).join(' ')
+
+  return (
+    <div className='rounded-lg border border-orange-100 bg-orange-50/60 p-3 shadow-sm dark:border-orange-500/20 dark:bg-orange-500/5'>
+      <svg
+        viewBox='0 0 320 290'
+        role='img'
+        aria-label='Correlation signal radar chart'
+        className='h-[260px] w-full'
+      >
+        <defs>
+          <linearGradient id='signalRadarFill' x1='0' x2='1' y1='0' y2='1'>
+            <stop
+              offset='0%'
+              stopColor='var(--signal-radar-fill-start, #fb923c)'
+              stopOpacity='0.42'
+            />
+            <stop
+              offset='100%'
+              stopColor='var(--signal-radar-fill-end, #f97316)'
+              stopOpacity='0.12'
+            />
+          </linearGradient>
+        </defs>
+
+        <rect
+          width='320'
+          height='290'
+          rx='14'
+          fill='var(--signal-radar-bg, rgba(255, 247, 237, 0.55))'
+        />
+
+        {rings.map((ring) => {
+          const points = RADAR_SIGNAL_DEFS.map((_, index) =>
+            toPoint(index, RADAR_SIGNAL_DEFS.length, ring * maxRadius)
+          )
+            .map((point) => `${point.x},${point.y}`)
+            .join(' ')
+
+          return (
+            <polygon
+              key={ring}
+              points={points}
+              fill='none'
+              stroke='var(--signal-radar-grid, #fed7aa)'
+              strokeWidth='1'
+            />
+          )
+        })}
+
+        {RADAR_SIGNAL_DEFS.map((signal, index) => {
+          const end = toPoint(index, RADAR_SIGNAL_DEFS.length, maxRadius)
+          const label = toPoint(index, RADAR_SIGNAL_DEFS.length, maxRadius + 28)
+
+          return (
+            <g key={signal.key}>
+              <line
+                x1='160'
+                y1='145'
+                x2={end.x}
+                y2={end.y}
+                stroke='var(--signal-radar-grid, #fed7aa)'
+                strokeWidth='1'
+              />
+              <text
+                x={label.x}
+                y={label.y}
+                textAnchor={
+                  label.x < 145 ? 'end' : label.x > 175 ? 'start' : 'middle'
+                }
+                dominantBaseline='middle'
+                className='fill-slate-600 text-[11px] dark:fill-slate-300'
+              >
+                {signal.label}
+              </text>
+            </g>
+          )
+        })}
+
+        <polygon
+          points={polygon}
+          fill='url(#signalRadarFill)'
+          stroke='var(--signal-radar-line, #f97316)'
+          strokeWidth='2'
+        />
+        <polygon
+          points={polygon}
+          fill='none'
+          stroke='var(--signal-radar-line-soft, #fdba74)'
+          strokeWidth='1.5'
+        />
+      </svg>
+    </div>
+  )
+}
 
 function SignalBar({ label, score }: { label: string; score?: number | null }) {
   const available = score != null
@@ -204,22 +321,26 @@ function ResultRow({
 
       {isExpanded && (
         <div className='space-y-4 border-t p-4'>
-          <div className='space-y-3'>
-            <h4 className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-              Signal Breakdown
-            </h4>
-            {SIGNAL_DEFS.map(({ key, label }) => (
-              <SignalBar
-                key={key}
-                label={label}
-                score={shap[key] as number | null | undefined}
-              />
-            ))}
+          <div className='grid gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(260px,1fr)]'>
+            <SignalRadar shap={shap} />
+
+            <div className='space-y-3'>
+              <h4 className='text-xs font-semibold tracking-wider text-muted-foreground uppercase'>
+                Signal Breakdown
+              </h4>
+              {SIGNAL_DEFS.map(({ key, label }) => (
+                <SignalBar
+                  key={key}
+                  label={label}
+                  score={shap[key] as number | null | undefined}
+                />
+              ))}
+            </div>
           </div>
 
           {shap.tier1_links && shap.tier1_links.length > 0 && (
             <div className='space-y-2 border-t pt-4'>
-              <h4 className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+              <h4 className='text-xs font-semibold tracking-wider text-muted-foreground uppercase'>
                 Hard Links
               </h4>
               <ul className='space-y-1'>
@@ -238,7 +359,7 @@ function ResultRow({
 
           {shap.notes && shap.notes.length > 0 && (
             <div className='space-y-2 border-t pt-4'>
-              <h4 className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+              <h4 className='text-xs font-semibold tracking-wider text-muted-foreground uppercase'>
                 Notes
               </h4>
               <ul className='space-y-1'>
@@ -296,15 +417,10 @@ export function CorrelationResults({
   }
 
   const pairValid =
-    mode === 'pair' &&
-    selectedA &&
-    selectedB &&
-    selectedA !== selectedB
+    mode === 'pair' && selectedA && selectedB && selectedA !== selectedB
 
   const runDisabled =
-    isCorrelating ||
-    !canCorrelate ||
-    (mode === 'pair' && !pairValid)
+    isCorrelating || !canCorrelate || (mode === 'pair' && !pairValid)
 
   return (
     <Card>
@@ -317,11 +433,7 @@ export function CorrelationResults({
                 Collect at least 2 accounts to run correlation.
               </span>
             )}
-            <Button
-              onClick={handleRun}
-              disabled={runDisabled}
-              size='sm'
-            >
+            <Button onClick={handleRun} disabled={runDisabled} size='sm'>
               {isCorrelating ? (
                 <>
                   <Loader2 size={16} className='animate-spin' />

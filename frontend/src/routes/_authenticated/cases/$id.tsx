@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { type ComponentType, useCallback, useEffect, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   Activity,
@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { API } from '@/lib/aria-api'
+import { cn } from '@/lib/utils'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,7 +53,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { ConfigDrawer } from '@/components/config-drawer'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,21 +60,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CorrelationResults } from '@/components/correlation-results'
-import { EvidencePanel, type Insight } from '@/components/evidence-panel'
-import {
-  IntelligenceBriefing,
-  type IntelligenceReport,
-} from '@/components/intelligence-briefing'
-import { Header } from '@/components/layout/header'
 import { Input } from '@/components/ui/input'
-import { InvestigationGraph } from '@/components/investigation-graph'
-import { TimelineView } from '@/components/timeline-view'
-import { InvestigationRunner } from '@/components/investigation-runner'
-import { Main } from '@/components/layout/main'
-import { OsintPanel } from '@/components/osint-panel'
-import { ProfileDropdown } from '@/components/profile-dropdown'
-import { Search as SearchBar } from '@/components/search'
 import {
   Select,
   SelectContent,
@@ -92,8 +78,22 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ConfigDrawer } from '@/components/config-drawer'
+import { CorrelationResults } from '@/components/correlation-results'
+import { EvidencePanel, type Insight } from '@/components/evidence-panel'
+import {
+  IntelligenceBriefing,
+  type IntelligenceReport,
+} from '@/components/intelligence-briefing'
+import { InvestigationGraph } from '@/components/investigation-graph'
+import { InvestigationRunner } from '@/components/investigation-runner'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { OsintPanel } from '@/components/osint-panel'
+import { ProfileDropdown } from '@/components/profile-dropdown'
+import { Search as SearchBar } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { TimelineView } from '@/components/timeline-view'
 
 export const Route = createFileRoute('/_authenticated/cases/$id')({
   component: CaseDetail,
@@ -153,6 +153,16 @@ interface CorrelationResult {
   shap_json: Record<string, unknown>
   created_at: string
 }
+
+type CaseSection =
+  | 'identifiers'
+  | 'osint'
+  | 'profiles'
+  | 'correlation'
+  | 'graph'
+  | 'timeline'
+  | 'insights'
+  | 'intelligence'
 
 // ── Helpers ──
 
@@ -262,7 +272,8 @@ function CaseDetail() {
   // Action state
   const [collecting, setCollecting] = useState<Record<number, boolean>>({})
   const [isCorrelating, setIsCorrelating] = useState(false)
-  const [activeTab, setActiveTab] = useState('identifiers')
+  const [activeCaseSection, setActiveCaseSection] =
+    useState<CaseSection>('identifiers')
 
   // Add-identifier form
   const [showAddForm, setShowAddForm] = useState(false)
@@ -275,7 +286,7 @@ function CaseDetail() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
 
-  // Profiles tab state
+  // Profiles section state
   const [postView, setPostView] = useState<
     Record<number, { filter: string; expanded: boolean }>
   >({})
@@ -399,15 +410,11 @@ function CaseDetail() {
     }
   }
 
-  const handleCorrelate = async (
-    accountAId?: number,
-    accountBId?: number
-  ) => {
+  const handleCorrelate = async (accountAId?: number, accountBId?: number) => {
     setIsCorrelating(true)
     setError(null)
     try {
-      const isPair =
-        accountAId != null && accountBId != null
+      const isPair = accountAId != null && accountBId != null
       const res = await fetch(`${API}/api/cases/${id}/correlate`, {
         method: 'POST',
         credentials: 'include',
@@ -425,9 +432,7 @@ function CaseDetail() {
         fetchResults()
       } else {
         const err = await res.json().catch(() => ({}))
-        setError(
-          (err as Record<string, string>).detail || 'Correlation failed'
-        )
+        setError((err as Record<string, string>).detail || 'Correlation failed')
       }
     } catch (e) {
       setError(
@@ -464,10 +469,22 @@ function CaseDetail() {
         body: JSON.stringify({ status: newStatus }),
       })
       if (!res.ok) {
-        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        const err = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
         throw new Error(err)
       }
-      setCaseData((prev) => prev ? { ...prev, status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : prev)
+      setCaseData((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: newStatus,
+              closed_at:
+                newStatus === 'closed' ? new Date().toISOString() : null,
+            }
+          : prev
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to update case status')
     }
@@ -496,7 +513,10 @@ function CaseDetail() {
         }),
       })
       if (!res.ok) {
-        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        const err = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
         throw new Error(err)
       }
       setEditingId(null)
@@ -517,7 +537,10 @@ function CaseDetail() {
         credentials: 'include',
       })
       if (!res.ok && res.status !== 204) {
-        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        const err = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
         throw new Error(err)
       }
       fetchCase()
@@ -566,6 +589,67 @@ function CaseDetail() {
       return next
     })
   }
+
+  const caseSections: Array<{
+    key: CaseSection
+    title: string
+    description: string
+    icon: ComponentType<{ className?: string }>
+    count?: number
+  }> = [
+    {
+      key: 'identifiers',
+      title: 'Identifiers',
+      description: 'Seed inputs and collected accounts',
+      icon: Users,
+      count: identifiers.length,
+    },
+    {
+      key: 'osint',
+      title: 'OSINT Discovery',
+      description: 'Open-source lookups',
+      icon: Search,
+    },
+    {
+      key: 'profiles',
+      title: 'Profiles & Activity',
+      description: 'Collected account data',
+      icon: Activity,
+      count: accounts.length,
+    },
+    {
+      key: 'correlation',
+      title: 'Correlation',
+      description: 'Identity signal comparison',
+      icon: GitMerge,
+      count: correlationResults.length,
+    },
+    {
+      key: 'graph',
+      title: 'Graph',
+      description: 'Relationship map',
+      icon: Globe,
+    },
+    {
+      key: 'timeline',
+      title: 'Timeline',
+      description: 'Chronological events',
+      icon: Calendar,
+    },
+    {
+      key: 'insights',
+      title: 'Insights',
+      description: 'Analytical observations',
+      icon: Lightbulb,
+      count: insights.length,
+    },
+    {
+      key: 'intelligence',
+      title: 'Intelligence',
+      description: 'Briefing and cited claims',
+      icon: Bot,
+    },
+  ]
 
   // ── Loading state ──
 
@@ -656,9 +740,7 @@ function CaseDetail() {
                 <code className='text-xs'>{padId(caseData.id)}</code>
                 <Separator orientation='vertical' className='h-4' />
                 <Badge
-                  variant={
-                    caseData.status === 'open' ? 'default' : 'secondary'
-                  }
+                  variant={caseData.status === 'open' ? 'default' : 'secondary'}
                 >
                   {caseData.status}
                 </Badge>
@@ -720,10 +802,10 @@ function CaseDetail() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Delete this case?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will permanently delete &quot;{caseData.title}&quot; and
-                      all associated data including identifiers, collected
-                      accounts, posts, and correlation results. This action cannot
-                      be undone.
+                      This will permanently delete &quot;{caseData.title}&quot;
+                      and all associated data including identifiers, collected
+                      accounts, posts, and correlation results. This action
+                      cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -771,570 +853,651 @@ function CaseDetail() {
           />
         </div>
 
-        {/* ── Tabs ── */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className='w-full overflow-x-auto pb-2'>
-            <TabsList>
-              <TabsTrigger value='identifiers'>
-                <Users className='h-4 w-4' />
-                Identifiers ({identifiers.length})
-              </TabsTrigger>
-              <TabsTrigger value='osint'>
-                <Search className='h-4 w-4' />
-                OSINT Discovery
-              </TabsTrigger>
-              <TabsTrigger value='profiles'>
-                <Activity className='h-4 w-4' />
-                Profiles & Activity
-                {accounts.length > 0 && ` (${accounts.length})`}
-              </TabsTrigger>
-              <TabsTrigger value='correlation'>
-                <GitMerge className='h-4 w-4' />
-                Correlation
-                {correlationResults.length > 0 &&
-                  ` (${correlationResults.length})`}
-              </TabsTrigger>
-              <TabsTrigger value='graph'>
-                <Globe className='h-4 w-4' />
-                Graph
-              </TabsTrigger>
-              <TabsTrigger value='timeline'>
-                <Calendar className='h-4 w-4' />
-                Timeline
-              </TabsTrigger>
-              <TabsTrigger value='insights'>
-                <Lightbulb className='h-4 w-4' />
-                Insights
-                {insights.length > 0 && ` (${insights.length})`}
-              </TabsTrigger>
-              <TabsTrigger value='intelligence'>
-                <Bot className='h-4 w-4' />
-                Intelligence
-              </TabsTrigger>
-            </TabsList>
-          </div>
+        {/* ── Case Workspace ── */}
+        <div className='grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)]'>
+          <aside className='h-fit rounded-xl border bg-card p-2 shadow-sm lg:sticky lg:top-20'>
+            <nav className='space-y-1'>
+              {caseSections.map((section) => {
+                const Icon = section.icon
+                const isActive = activeCaseSection === section.key
 
-          {/* ── Identifiers Tab ── */}
-          <TabsContent value='identifiers'>
-            <div className='grid gap-4 lg:grid-cols-2'>
-              {/* Left — Seed Identifiers */}
-              <Card>
-                <CardHeader className='flex flex-row items-center justify-between'>
-                  <div>
-                    <CardTitle>Seed Identifiers</CardTitle>
-                    <CardDescription>
-                      Input data driving this investigation
-                    </CardDescription>
-                  </div>
-                  {!showAddForm && (
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => setShowAddForm(true)}
-                    >
-                      <Plus className='h-4 w-4' />
-                      Add Identifier
-                    </Button>
-                  )}
-                </CardHeader>
-                <CardContent>
-                  {identifiers.length === 0 && !showAddForm ? (
-                    <p className='py-6 text-center text-sm text-muted-foreground'>
-                      No identifiers yet.
-                    </p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Type</TableHead>
-                          <TableHead>Value</TableHead>
-                          <TableHead>Platform</TableHead>
-                          <TableHead className='text-right'>Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {identifiers.map((ident) => (
-                          <TableRow key={ident.id}>
-                            {editingId === ident.id ? (
-                              <>
-                                <TableCell>
-                                  <Select
-                                    value={editRow.identifier_type}
-                                    onValueChange={(v) =>
-                                      setEditRow((prev) => ({
-                                        ...prev,
-                                        identifier_type: v,
-                                      }))
-                                    }
-                                    disabled={savingEdit}
-                                  >
-                                    <SelectTrigger className='h-8 w-[110px]'>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {IDENTIFIER_TYPES.map((t) => (
-                                        <SelectItem
-                                          key={t.value}
-                                          value={t.value}
-                                        >
-                                          {t.label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </TableCell>
-                                <TableCell>
-                                  <Input
-                                    className='h-8 font-mono text-sm'
-                                    value={editRow.value}
-                                    onChange={(e) =>
-                                      setEditRow((prev) => ({
-                                        ...prev,
-                                        value: e.target.value,
-                                      }))
-                                    }
-                                    disabled={savingEdit}
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  {editRow.identifier_type === 'username' ? (
-                                    <Select
-                                      value={editRow.platform_hint || 'none'}
-                                      onValueChange={(v) =>
-                                        setEditRow((prev) => ({
-                                          ...prev,
-                                          platform_hint: v,
-                                        }))
-                                      }
-                                      disabled={savingEdit}
-                                    >
-                                      <SelectTrigger className='h-8 w-[110px]'>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value='none'>
-                                          None
-                                        </SelectItem>
-                                        {PLATFORMS.map((p) => (
-                                          <SelectItem
-                                            key={p.value}
-                                            value={p.value}
-                                          >
-                                            {p.label}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  ) : (
-                                    <span className='text-muted-foreground'>
-                                      —
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell className='text-right'>
-                                  <div className='flex items-center justify-end gap-1'>
-                                    <Button
-                                      variant='ghost'
-                                      size='icon'
-                                      className='h-7 w-7'
-                                      disabled={savingEdit}
-                                      onClick={() =>
-                                        handleEditIdentifier(ident.id)
-                                      }
-                                    >
-                                      {savingEdit ? (
-                                        <Loader2 className='h-3 w-3 animate-spin' />
-                                      ) : (
-                                        <Check className='h-3 w-3' />
-                                      )}
-                                    </Button>
-                                    <Button
-                                      variant='ghost'
-                                      size='icon'
-                                      className='h-7 w-7'
-                                      disabled={savingEdit}
-                                      onClick={() => setEditingId(null)}
-                                    >
-                                      <X className='h-3 w-3' />
-                                    </Button>
-                                  </div>
-                                </TableCell>
-                              </>
-                            ) : (
-                              <>
-                                <TableCell>
-                                  <Badge
-                                    variant={
-                                      ident.identifier_type === 'username'
-                                        ? 'default'
-                                        : 'secondary'
-                                    }
-                                  >
-                                    {ident.identifier_type === 'profile_url'
-                                      ? 'URL'
-                                      : capitalize(ident.identifier_type)}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className='font-mono text-sm'>
-                                  {ident.value}
-                                </TableCell>
-                                <TableCell>
-                                  {ident.platform_hint ? (
-                                    <Badge variant='secondary'>
-                                      {capitalize(ident.platform_hint)}
-                                    </Badge>
-                                  ) : (
-                                    <span className='text-muted-foreground'>
-                                      —
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell className='text-right'>
-                                  <div className='flex items-center justify-end gap-1'>
-                                    {ident.identifier_type === 'username' && (
-                                      <Button
-                                        variant='outline'
-                                        size='sm'
-                                        disabled={!!collecting[ident.id]}
-                                        onClick={() => handleCollect(ident)}
+                return (
+                  <button
+                    key={section.key}
+                    type='button'
+                    className={cn(
+                      'flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition',
+                      isActive
+                        ? 'bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    )}
+                    onClick={() => setActiveCaseSection(section.key)}
+                  >
+                    <Icon className='mt-0.5 size-4 shrink-0' />
+                    <span className='min-w-0 flex-1'>
+                      <span className='flex items-center gap-2 text-sm font-semibold'>
+                        {section.title}
+                        {typeof section.count === 'number' &&
+                          section.count > 0 && (
+                            <span className='rounded-full bg-background px-1.5 py-0.5 text-[0.65rem] leading-none text-muted-foreground'>
+                              {section.count}
+                            </span>
+                          )}
+                      </span>
+                      <span className='mt-0.5 block text-xs opacity-80'>
+                        {section.description}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </nav>
+          </aside>
+
+          <div className='min-w-0'>
+            {activeCaseSection === 'identifiers' && (
+              <section id='identifiers' className='space-y-4'>
+                <SectionHeading
+                  icon={Users}
+                  title={`Identifiers (${identifiers.length})`}
+                  description='Seed inputs and collected accounts for this case'
+                />
+                <div className='space-y-4'>
+                  <Card>
+                    <CardHeader className='flex flex-row items-center justify-between'>
+                      <div>
+                        <CardTitle>Seed Identifiers</CardTitle>
+                        <CardDescription>
+                          Input data driving this investigation
+                        </CardDescription>
+                      </div>
+                      {!showAddForm && (
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => setShowAddForm(true)}
+                        >
+                          <Plus className='h-4 w-4' />
+                          Add Identifier
+                        </Button>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      {identifiers.length === 0 && !showAddForm ? (
+                        <p className='py-6 text-center text-sm text-muted-foreground'>
+                          No identifiers yet.
+                        </p>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Type</TableHead>
+                              <TableHead>Value</TableHead>
+                              <TableHead>Platform</TableHead>
+                              <TableHead className='text-right'>
+                                Action
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {identifiers.map((ident) => (
+                              <TableRow key={ident.id}>
+                                {editingId === ident.id ? (
+                                  <>
+                                    <TableCell>
+                                      <Select
+                                        value={editRow.identifier_type}
+                                        onValueChange={(v) =>
+                                          setEditRow((prev) => ({
+                                            ...prev,
+                                            identifier_type: v,
+                                          }))
+                                        }
+                                        disabled={savingEdit}
                                       >
-                                        {collecting[ident.id] ? (
-                                          <>
-                                            <Loader2 className='h-3 w-3 animate-spin' />
-                                            Collecting...
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Download className='h-3 w-3' />
-                                            Collect
-                                          </>
-                                        )}
-                                      </Button>
-                                    )}
-                                    <Button
-                                      variant='ghost'
-                                      size='icon'
-                                      className='h-7 w-7'
-                                      onClick={() => {
-                                        setEditingId(ident.id)
-                                        setEditRow({
-                                          identifier_type:
-                                            ident.identifier_type,
-                                          value: ident.value,
-                                          platform_hint:
-                                            ident.platform_hint || '',
-                                        })
-                                      }}
-                                    >
-                                      <Pencil className='h-3 w-3' />
-                                    </Button>
-                                    <AlertDialog>
-                                      <AlertDialogTrigger asChild>
+                                        <SelectTrigger className='h-8 w-[110px]'>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {IDENTIFIER_TYPES.map((t) => (
+                                            <SelectItem
+                                              key={t.value}
+                                              value={t.value}
+                                            >
+                                              {t.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Input
+                                        className='h-8 font-mono text-sm'
+                                        value={editRow.value}
+                                        onChange={(e) =>
+                                          setEditRow((prev) => ({
+                                            ...prev,
+                                            value: e.target.value,
+                                          }))
+                                        }
+                                        disabled={savingEdit}
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      {editRow.identifier_type ===
+                                      'username' ? (
+                                        <Select
+                                          value={
+                                            editRow.platform_hint || 'none'
+                                          }
+                                          onValueChange={(v) =>
+                                            setEditRow((prev) => ({
+                                              ...prev,
+                                              platform_hint: v,
+                                            }))
+                                          }
+                                          disabled={savingEdit}
+                                        >
+                                          <SelectTrigger className='h-8 w-[110px]'>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value='none'>
+                                              None
+                                            </SelectItem>
+                                            {PLATFORMS.map((p) => (
+                                              <SelectItem
+                                                key={p.value}
+                                                value={p.value}
+                                              >
+                                                {p.label}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      ) : (
+                                        <span className='text-muted-foreground'>
+                                          —
+                                        </span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className='text-right'>
+                                      <div className='flex items-center justify-end gap-1'>
                                         <Button
                                           variant='ghost'
                                           size='icon'
-                                          className='h-7 w-7 text-destructive hover:text-destructive'
-                                          disabled={deletingId === ident.id}
+                                          className='h-7 w-7'
+                                          disabled={savingEdit}
+                                          onClick={() =>
+                                            handleEditIdentifier(ident.id)
+                                          }
                                         >
-                                          {deletingId === ident.id ? (
+                                          {savingEdit ? (
                                             <Loader2 className='h-3 w-3 animate-spin' />
                                           ) : (
-                                            <Trash2 className='h-3 w-3' />
+                                            <Check className='h-3 w-3' />
                                           )}
                                         </Button>
-                                      </AlertDialogTrigger>
-                                      <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                          <AlertDialogTitle>
-                                            Delete identifier?
-                                          </AlertDialogTitle>
-                                          <AlertDialogDescription>
-                                            This will remove &quot;
-                                            {ident.value}&quot; from this case.
-                                          </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                          <AlertDialogCancel>
-                                            Cancel
-                                          </AlertDialogCancel>
-                                          <AlertDialogAction
-                                            onClick={() =>
-                                              handleDeleteIdentifier(ident.id)
-                                            }
-                                            className='bg-destructive text-white hover:bg-destructive/90'
+                                        <Button
+                                          variant='ghost'
+                                          size='icon'
+                                          className='h-7 w-7'
+                                          disabled={savingEdit}
+                                          onClick={() => setEditingId(null)}
+                                        >
+                                          <X className='h-3 w-3' />
+                                        </Button>
+                                      </div>
+                                    </TableCell>
+                                  </>
+                                ) : (
+                                  <>
+                                    <TableCell>
+                                      <Badge
+                                        variant={
+                                          ident.identifier_type === 'username'
+                                            ? 'default'
+                                            : 'secondary'
+                                        }
+                                      >
+                                        {ident.identifier_type === 'profile_url'
+                                          ? 'URL'
+                                          : capitalize(ident.identifier_type)}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className='font-mono text-sm'>
+                                      {ident.value}
+                                    </TableCell>
+                                    <TableCell>
+                                      {ident.platform_hint ? (
+                                        <Badge variant='secondary'>
+                                          {capitalize(ident.platform_hint)}
+                                        </Badge>
+                                      ) : (
+                                        <span className='text-muted-foreground'>
+                                          —
+                                        </span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className='text-right'>
+                                      <div className='flex items-center justify-end gap-1'>
+                                        {ident.identifier_type ===
+                                          'username' && (
+                                          <Button
+                                            variant='outline'
+                                            size='sm'
+                                            disabled={!!collecting[ident.id]}
+                                            onClick={() => handleCollect(ident)}
                                           >
-                                            Delete
-                                          </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                      </AlertDialogContent>
-                                    </AlertDialog>
-                                  </div>
-                                </TableCell>
-                              </>
-                            )}
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
+                                            {collecting[ident.id] ? (
+                                              <>
+                                                <Loader2 className='h-3 w-3 animate-spin' />
+                                                Collecting...
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Download className='h-3 w-3' />
+                                                Collect
+                                              </>
+                                            )}
+                                          </Button>
+                                        )}
+                                        <Button
+                                          variant='ghost'
+                                          size='icon'
+                                          className='h-7 w-7'
+                                          onClick={() => {
+                                            setEditingId(ident.id)
+                                            setEditRow({
+                                              identifier_type:
+                                                ident.identifier_type,
+                                              value: ident.value,
+                                              platform_hint:
+                                                ident.platform_hint || '',
+                                            })
+                                          }}
+                                        >
+                                          <Pencil className='h-3 w-3' />
+                                        </Button>
+                                        <AlertDialog>
+                                          <AlertDialogTrigger asChild>
+                                            <Button
+                                              variant='ghost'
+                                              size='icon'
+                                              className='h-7 w-7 text-destructive hover:text-destructive'
+                                              disabled={deletingId === ident.id}
+                                            >
+                                              {deletingId === ident.id ? (
+                                                <Loader2 className='h-3 w-3 animate-spin' />
+                                              ) : (
+                                                <Trash2 className='h-3 w-3' />
+                                              )}
+                                            </Button>
+                                          </AlertDialogTrigger>
+                                          <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                              <AlertDialogTitle>
+                                                Delete identifier?
+                                              </AlertDialogTitle>
+                                              <AlertDialogDescription>
+                                                This will remove &quot;
+                                                {ident.value}&quot; from this
+                                                case.
+                                              </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                              <AlertDialogCancel>
+                                                Cancel
+                                              </AlertDialogCancel>
+                                              <AlertDialogAction
+                                                onClick={() =>
+                                                  handleDeleteIdentifier(
+                                                    ident.id
+                                                  )
+                                                }
+                                                className='bg-destructive text-white hover:bg-destructive/90'
+                                              >
+                                                Delete
+                                              </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
+                                      </div>
+                                    </TableCell>
+                                  </>
+                                )}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
 
-                  {/* ── Add Identifier Form ── */}
-                  {showAddForm && (
-                    <div className='mt-4 space-y-3 rounded-lg border p-4'>
-                      {addRows.map((row, i) => (
-                        <div key={i} className='flex items-center gap-2'>
-                          <Select
-                            value={row.identifier_type}
-                            onValueChange={(v) =>
-                              updateRow(i, 'identifier_type', v)
-                            }
-                            disabled={addingIds}
-                          >
-                            <SelectTrigger className='w-[130px] shrink-0'>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {IDENTIFIER_TYPES.map((t) => (
-                                <SelectItem key={t.value} value={t.value}>
-                                  {t.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                      {/* ── Add Identifier Form ── */}
+                      {showAddForm && (
+                        <div className='mt-4 space-y-3 rounded-lg border p-4'>
+                          {addRows.map((row, i) => (
+                            <div key={i} className='flex items-center gap-2'>
+                              <Select
+                                value={row.identifier_type}
+                                onValueChange={(v) =>
+                                  updateRow(i, 'identifier_type', v)
+                                }
+                                disabled={addingIds}
+                              >
+                                <SelectTrigger className='w-[130px] shrink-0'>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IDENTIFIER_TYPES.map((t) => (
+                                    <SelectItem key={t.value} value={t.value}>
+                                      {t.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
 
-                          <Input
-                            className='min-w-0 flex-1'
-                            placeholder={
-                              PLACEHOLDERS[row.identifier_type] || 'Value'
-                            }
-                            value={row.value}
-                            onChange={(e) =>
-                              updateRow(i, 'value', e.target.value)
-                            }
-                            disabled={addingIds}
-                          />
+                              <Input
+                                className='min-w-0 flex-1'
+                                placeholder={
+                                  PLACEHOLDERS[row.identifier_type] || 'Value'
+                                }
+                                value={row.value}
+                                onChange={(e) =>
+                                  updateRow(i, 'value', e.target.value)
+                                }
+                                disabled={addingIds}
+                              />
 
-                          {row.identifier_type === 'username' && (
-                            <Select
-                              value={row.platform_hint || 'none'}
-                              onValueChange={(v) =>
-                                updateRow(i, 'platform_hint', v)
-                              }
-                              disabled={addingIds}
-                            >
-                              <SelectTrigger className='w-[130px] shrink-0'>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value='none'>
-                                  No Platform
-                                </SelectItem>
-                                {PLATFORMS.map((p) => (
-                                  <SelectItem key={p.value} value={p.value}>
-                                    {p.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          )}
+                              {row.identifier_type === 'username' && (
+                                <Select
+                                  value={row.platform_hint || 'none'}
+                                  onValueChange={(v) =>
+                                    updateRow(i, 'platform_hint', v)
+                                  }
+                                  disabled={addingIds}
+                                >
+                                  <SelectTrigger className='w-[130px] shrink-0'>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value='none'>
+                                      No Platform
+                                    </SelectItem>
+                                    {PLATFORMS.map((p) => (
+                                      <SelectItem key={p.value} value={p.value}>
+                                        {p.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
 
-                          {addRows.length > 1 && (
+                              {addRows.length > 1 && (
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='icon'
+                                  className='shrink-0'
+                                  disabled={addingIds}
+                                  onClick={() =>
+                                    setAddRows((prev) =>
+                                      prev.filter((_, j) => j !== i)
+                                    )
+                                  }
+                                >
+                                  <X className='h-4 w-4' />
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+
+                          <div className='flex items-center justify-between'>
                             <Button
                               type='button'
-                              variant='outline'
-                              size='icon'
-                              className='shrink-0'
+                              variant='link'
+                              size='sm'
+                              className='h-auto p-0'
                               disabled={addingIds}
                               onClick={() =>
-                                setAddRows((prev) =>
-                                  prev.filter((_, j) => j !== i)
-                                )
+                                setAddRows((prev) => [
+                                  ...prev,
+                                  { ...EMPTY_ROW },
+                                ])
                               }
                             >
-                              <X className='h-4 w-4' />
+                              <Plus className='h-3 w-3' />
+                              More
                             </Button>
-                          )}
-                        </div>
-                      ))}
-
-                      <div className='flex items-center justify-between'>
-                        <Button
-                          type='button'
-                          variant='link'
-                          size='sm'
-                          className='h-auto p-0'
-                          disabled={addingIds}
-                          onClick={() =>
-                            setAddRows((prev) => [...prev, { ...EMPTY_ROW }])
-                          }
-                        >
-                          <Plus className='h-3 w-3' />
-                          More
-                        </Button>
-                        <div className='flex gap-2'>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            disabled={addingIds}
-                            onClick={() => {
-                              setShowAddForm(false)
-                              setAddRows([{ ...EMPTY_ROW }])
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            size='sm'
-                            disabled={
-                              addingIds ||
-                              addRows.every((r) => !r.value.trim())
-                            }
-                            onClick={handleAddIdentifiers}
-                          >
-                            {addingIds ? (
-                              <>
-                                <Loader2 className='h-3 w-3 animate-spin' />
-                                Saving...
-                              </>
-                            ) : (
-                              'Save'
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Right — Collection Status */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Collected Accounts</CardTitle>
-                  <CardDescription>
-                    Platform data gathered for this case
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {accounts.length === 0 ? (
-                    <p className='py-6 text-center text-sm text-muted-foreground'>
-                      No data collected yet. Use the Collect buttons to gather
-                      platform data.
-                    </p>
-                  ) : (
-                    <div className='space-y-3'>
-                      {accounts.map((acc) => (
-                        <div
-                          key={acc.id}
-                          className='flex items-center justify-between rounded-lg border p-3'
-                        >
-                          <div className='flex items-center gap-3'>
-                            <Badge variant='secondary'>
-                              {capitalize(acc.platform)}
-                            </Badge>
-                            <span className='font-mono text-sm'>
-                              {acc.username}
-                            </span>
-                            <span className='text-xs text-muted-foreground'>
-                              {acc.posts.length} posts
-                            </span>
+                            <div className='flex gap-2'>
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                disabled={addingIds}
+                                onClick={() => {
+                                  setShowAddForm(false)
+                                  setAddRows([{ ...EMPTY_ROW }])
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size='sm'
+                                disabled={
+                                  addingIds ||
+                                  addRows.every((r) => !r.value.trim())
+                                }
+                                onClick={handleAddIdentifiers}
+                              >
+                                {addingIds ? (
+                                  <>
+                                    <Loader2 className='h-3 w-3 animate-spin' />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  'Save'
+                                )}
+                              </Button>
+                            </div>
                           </div>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            className='h-8 w-8'
-                            disabled={!!collecting[acc.id]}
-                            onClick={() =>
-                              handleCollect({
-                                id: acc.id,
-                                platform_hint: acc.platform,
-                                value: acc.username,
-                              })
-                            }
-                          >
-                            {collecting[acc.id] ? (
-                              <Loader2 className='h-3 w-3 animate-spin' />
-                            ) : (
-                              <RefreshCw className='h-3 w-3' />
-                            )}
-                          </Button>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
+                      )}
+                    </CardContent>
+                  </Card>
+                  {/* Collection Status */}
 
-          {/* ── OSINT Tab ── */}
-          <TabsContent value='osint'>
-            <OsintPanel
-              caseId={id}
-              identifiers={identifiers}
-              onAccountImported={fetchCase}
-            />
-          </TabsContent>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Collected Accounts</CardTitle>
+                      <CardDescription>
+                        Platform data gathered for this case
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {accounts.length === 0 ? (
+                        <p className='py-6 text-center text-sm text-muted-foreground'>
+                          No data collected yet. Use the Collect buttons to
+                          gather platform data.
+                        </p>
+                      ) : (
+                        <div className='space-y-3'>
+                          {accounts.map((acc) => (
+                            <div
+                              key={acc.id}
+                              className='flex items-center justify-between rounded-lg border p-3'
+                            >
+                              <div className='flex items-center gap-3'>
+                                <Badge variant='secondary'>
+                                  {capitalize(acc.platform)}
+                                </Badge>
+                                <span className='font-mono text-sm'>
+                                  {acc.username}
+                                </span>
+                                <span className='text-xs text-muted-foreground'>
+                                  {acc.posts.length} posts
+                                </span>
+                              </div>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='h-8 w-8'
+                                disabled={!!collecting[acc.id]}
+                                onClick={() =>
+                                  handleCollect({
+                                    id: acc.id,
+                                    platform_hint: acc.platform,
+                                    value: acc.username,
+                                  })
+                                }
+                              >
+                                {collecting[acc.id] ? (
+                                  <Loader2 className='h-3 w-3 animate-spin' />
+                                ) : (
+                                  <RefreshCw className='h-3 w-3' />
+                                )}
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </section>
+            )}
 
-          {/* ── Profiles & Activity Tab ── */}
-          <TabsContent value='profiles'>
-            <ProfilesTab
-              accounts={accounts}
-              postView={postView}
-              expandedPosts={expandedPosts}
-              networkSearch={networkSearch}
-              networkTab={networkTab}
-              setFilter={setFilter}
-              toggleFeedExpanded={toggleFeedExpanded}
-              togglePostExpand={togglePostExpand}
-              setNetworkSearch={setNetworkSearch}
-              setNetworkTab={(accId, tab) =>
-                setNetworkTab((prev) => ({ ...prev, [accId]: tab }))
-              }
-            />
-          </TabsContent>
+            {activeCaseSection === 'osint' && (
+              <section id='osint' className='space-y-4'>
+                <SectionHeading
+                  icon={Search}
+                  title='OSINT Discovery'
+                  description='Run and review open-source intelligence lookups'
+                />
+                <OsintPanel
+                  caseId={id}
+                  identifiers={identifiers}
+                  onAccountImported={fetchCase}
+                />
+              </section>
+            )}
 
-          {/* ── Correlation Tab ── */}
-          <TabsContent value='correlation'>
-            <CorrelationResults
-              results={correlationResults}
-              accounts={accounts}
-              isCorrelating={isCorrelating}
-              onCorrelate={handleCorrelate}
-            />
-          </TabsContent>
+            {activeCaseSection === 'profiles' && (
+              <section id='profiles' className='space-y-4'>
+                <SectionHeading
+                  icon={Activity}
+                  title={`Profiles & Activity${accounts.length > 0 ? ` (${accounts.length})` : ''}`}
+                  description='Collected platform profiles and their activity'
+                />
+                <ProfilesTab
+                  accounts={accounts}
+                  postView={postView}
+                  expandedPosts={expandedPosts}
+                  networkSearch={networkSearch}
+                  networkTab={networkTab}
+                  setFilter={setFilter}
+                  toggleFeedExpanded={toggleFeedExpanded}
+                  togglePostExpand={togglePostExpand}
+                  setNetworkSearch={setNetworkSearch}
+                  setNetworkTab={(accId, tab) =>
+                    setNetworkTab((prev) => ({ ...prev, [accId]: tab }))
+                  }
+                />
+              </section>
+            )}
 
-          {/* ── Graph Tab ── */}
-          <TabsContent value='graph'>
-            <InvestigationGraph caseId={id} apiBase={API} />
-          </TabsContent>
+            {activeCaseSection === 'correlation' && (
+              <section id='correlation' className='space-y-4'>
+                <SectionHeading
+                  icon={GitMerge}
+                  title={`Correlation${correlationResults.length > 0 ? ` (${correlationResults.length})` : ''}`}
+                  description='Compare collected accounts and identity signals'
+                />
+                <CorrelationResults
+                  results={correlationResults}
+                  accounts={accounts}
+                  isCorrelating={isCorrelating}
+                  onCorrelate={handleCorrelate}
+                />
+              </section>
+            )}
 
-          {/* ── Timeline Tab ── */}
-          <TabsContent value='timeline'>
-            <TimelineView caseId={id} apiBase={API} />
-          </TabsContent>
+            {activeCaseSection === 'graph' && (
+              <section id='graph' className='space-y-4'>
+                <SectionHeading
+                  icon={Globe}
+                  title='Graph'
+                  description='Relationship map for this investigation'
+                />
+                <InvestigationGraph caseId={id} apiBase={API} />
+              </section>
+            )}
 
-          {/* ── Insights Tab ── */}
-          <TabsContent value='insights'>
-            <EvidencePanel insights={insights} accounts={accounts} />
-          </TabsContent>
+            {activeCaseSection === 'timeline' && (
+              <section id='timeline' className='space-y-4'>
+                <SectionHeading
+                  icon={Calendar}
+                  title='Timeline'
+                  description='Chronological case events and collected activity'
+                />
+                <TimelineView caseId={id} apiBase={API} />
+              </section>
+            )}
 
-          {/* ── Intelligence Tab ── */}
-          <TabsContent value='intelligence'>
-            <IntelligenceBriefing
-              caseId={id}
-              intelligence={intelligence}
-              insights={insights}
-              onGenerated={() => fetchCase()}
-            />
-          </TabsContent>
-        </Tabs>
+            {activeCaseSection === 'insights' && (
+              <section id='insights' className='space-y-4'>
+                <SectionHeading
+                  icon={Lightbulb}
+                  title={`Insights${insights.length > 0 ? ` (${insights.length})` : ''}`}
+                  description='Evidence-backed analytical observations'
+                />
+                <EvidencePanel insights={insights} accounts={accounts} />
+              </section>
+            )}
+
+            {activeCaseSection === 'intelligence' && (
+              <section id='intelligence' className='space-y-4'>
+                <SectionHeading
+                  icon={Bot}
+                  title='Intelligence'
+                  description='Generated briefing and cited claims'
+                />
+                <IntelligenceBriefing
+                  caseId={id}
+                  intelligence={intelligence}
+                  insights={insights}
+                  onGenerated={() => fetchCase()}
+                />
+              </section>
+            )}
+          </div>
+        </div>
       </Main>
     </>
   )
 }
 
-// ── Profiles & Activity Tab ──
+function SectionHeading({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: ComponentType<{ className?: string }>
+  title: string
+  description: string
+}) {
+  return (
+    <div className='flex items-start gap-3'>
+      <div className='mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300'>
+        <Icon className='size-4' />
+      </div>
+      <div>
+        <h2 className='text-xl font-semibold tracking-tight'>{title}</h2>
+        <p className='mt-1 text-sm text-muted-foreground'>{description}</p>
+      </div>
+    </div>
+  )
+}
+
+// ── Profiles & Activity Section ──
 
 function ProfilesTab({
   accounts,
@@ -1364,7 +1527,7 @@ function ProfilesTab({
       <Card>
         <CardContent className='py-12 text-center'>
           <p className='text-sm text-muted-foreground'>
-            No accounts collected yet. Go to the Identifiers tab and use the
+            No accounts collected yet. Go to the Identifiers section and use the
             Collect buttons to gather platform data.
           </p>
         </CardContent>
@@ -1382,9 +1545,7 @@ function ProfilesTab({
         const pv = postView[acc.id] || { filter: 'all', expanded: false }
         const postTypes = [
           ...new Set(
-            contentPosts
-              .map((p) => p.metadata?.type as string)
-              .filter(Boolean)
+            contentPosts.map((p) => p.metadata?.type as string).filter(Boolean)
           ),
         ]
         const filtered = contentPosts.filter(
@@ -1409,8 +1570,7 @@ function ProfilesTab({
                 ...new Set(
                   posts
                     .filter(
-                      (p) =>
-                        p.metadata?.type === 'repo' && p.metadata?.language
+                      (p) => p.metadata?.type === 'repo' && p.metadata?.language
                     )
                     .map((p) => p.metadata.language as string)
                 ),
@@ -1451,7 +1611,9 @@ function ProfilesTab({
                       <AvatarImage src={acc.profile_image_url} />
                     )}
                     <AvatarFallback>
-                      {(acc.display_name || acc.username || '?')[0].toUpperCase()}
+                      {(acc.display_name ||
+                        acc.username ||
+                        '?')[0].toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
 
@@ -1486,7 +1648,10 @@ function ProfilesTab({
                 {/* Stats */}
                 <div className='mt-4 flex flex-wrap gap-6'>
                   {acc.karma != null && (
-                    <StatItem label='Karma' value={acc.karma.toLocaleString()} />
+                    <StatItem
+                      label='Karma'
+                      value={acc.karma.toLocaleString()}
+                    />
                   )}
                   {acc.follower_count != null && (
                     <StatItem
@@ -1568,12 +1733,10 @@ function ProfilesTab({
               <Card className='mt-3'>
                 <CardHeader className='pb-3'>
                   <div className='flex items-center justify-between'>
-                    <span className='font-mono text-xs uppercase text-muted-foreground'>
+                    <span className='font-mono text-xs text-muted-foreground uppercase'>
                       {acc.platform} Activity
                     </span>
-                    <Badge variant='secondary'>
-                      {filtered.length} records
-                    </Badge>
+                    <Badge variant='secondary'>{filtered.length} records</Badge>
                   </div>
                   <div className='flex flex-wrap gap-1 pt-2'>
                     <Button
@@ -1714,9 +1877,7 @@ function PostRow({
             )}
             {platform === 'github' &&
               meta.type === 'repo' &&
-              meta.stars != null && (
-                <span>★ {Number(meta.stars)}</span>
-              )}
+              meta.stars != null && <span>★ {Number(meta.stars)}</span>}
             {platform === 'github' && !!meta.language && (
               <span>{String(meta.language)}</span>
             )}
@@ -1743,17 +1904,8 @@ function PostRow({
       {showImages && (
         <div className='mt-1 flex gap-1 pl-10'>
           {images.slice(0, 3).map((img, i) => (
-            <a
-              key={i}
-              href={img}
-              target='_blank'
-              rel='noopener noreferrer'
-            >
-              <img
-                src={img}
-                alt=''
-                className='max-h-16 rounded object-cover'
-              />
+            <a key={i} href={img} target='_blank' rel='noopener noreferrer'>
+              <img src={img} alt='' className='max-h-16 rounded object-cover' />
             </a>
           ))}
         </div>
@@ -1780,7 +1932,7 @@ function NetworkPanel({
   onTabChange: (tab: string) => void
 }) {
   const activePost = activeTab === 'followers' ? followers : following
-  const logins = ((activePost?.metadata?.logins as string[]) || [])
+  const logins = (activePost?.metadata?.logins as string[]) || []
   const totalCount = (activePost?.metadata?.total_count as number) || 0
   const fetchedCount = (activePost?.metadata?.fetched_count as number) || 0
 
