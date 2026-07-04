@@ -5,6 +5,7 @@ import PostRow from "./PostRow";
 import OsintPanel from "./OsintPanel";
 import CorrelationResultRow from "./CorrelationResultRow";
 import { API } from "../lib/api";
+import NetworkPanel from "./NetworkPanel";
 
 const EMPTY_ID = { identifier_type: "username", value: "", platform_hint: "" };
 
@@ -258,6 +259,8 @@ export default function CaseDetail() {
                   <option value="">NO PLATFORM</option>
                   <option value="reddit">REDDIT</option>
                   <option value="twitter">TWITTER</option>
+                  <option value="github">GITHUB</option>
+                  <option value="instagram">INSTAGRAM</option>
                 </select>
                 {newIds.length > 1 && (
                   <button
@@ -339,9 +342,18 @@ export default function CaseDetail() {
                         .map(p => p.metadata?.subreddit)
                         .filter(Boolean)
                     )],
+                    topLanguages: acc.platform === "github"
+                      ? [...new Set(
+                          posts
+                            .filter(p => p.metadata?.type === "repo" && p.metadata?.language)
+                            .map(p => p.metadata.language)
+                        )].slice(0, 5)
+                      : [],
                   }}
                 />
-
+                {acc.platform === "github" && (
+                  <NetworkPanel posts={posts} username={acc.username} />
+                )}
                 {posts.length > 0 && (
                   <div className="aria-card" style={{ marginTop: 8 }}>
                     <div className="post-feed__header">
