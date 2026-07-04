@@ -22,13 +22,18 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
     cur.execute(
         """
         INSERT INTO accounts
-            (case_id, platform, username, display_name, bio, location, created_at, profile_image_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (case_id, platform, username, display_name, bio, location, created_at,
+             profile_image_url, karma, follower_count, following_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (case_id, platform, username) DO UPDATE SET
             display_name      = EXCLUDED.display_name,
             bio               = EXCLUDED.bio,
             location          = EXCLUDED.location,
-            profile_image_url = EXCLUDED.profile_image_url
+            created_at        = EXCLUDED.created_at,
+            profile_image_url = EXCLUDED.profile_image_url,
+            karma             = EXCLUDED.karma,
+            follower_count    = EXCLUDED.follower_count,
+            following_count   = EXCLUDED.following_count
         RETURNING id
         """,
         (
@@ -40,6 +45,9 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
             profile.location,
             created_at_dt,
             profile.profile_image_url,
+            profile.karma,
+            profile.follower_count,
+            profile.following_count,
         ),
     )
     account_id: int = cur.fetchone()["id"]
@@ -52,7 +60,9 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
             (account_id, external_id, text, timestamp, metadata)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (account_id, external_id)
-            DO NOTHING
+            DO UPDATE SET
+                text     = EXCLUDED.text,
+                metadata = EXCLUDED.metadata
             """,
             (
                 account_id,

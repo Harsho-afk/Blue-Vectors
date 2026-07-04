@@ -9,11 +9,10 @@ POST   /api/cases/{case_id}/collect       collect data for a case identifier
 """
 import json
 from typing import Optional, Literal
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from auth import get_current_user, get_db_conn
-from collector.base import collect_async
+from collector.base import collect_async, save_to_db
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -109,8 +108,6 @@ def check_case_ownership(conn, case_id: int, user_id: int):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
-
-
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_case(body: CaseCreate, current_user: dict = Depends(get_current_user)):
     """
@@ -378,68 +375,7 @@ async def collect_for_case(
 
     conn = get_db_conn()
     try:
-        cur = conn.cursor()
-
-        created_at_dt = None
-        if profile.created_utc is not None:
-            created_at_dt = datetime.fromtimestamp(
-                profile.created_utc, tz=timezone.utc
-            ).isoformat()
-        cur.execute(
-            """
-            INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (case_id, platform, username) DO UPDATE SET
-                display_name      = EXCLUDED.display_name,
-                bio               = EXCLUDED.bio,
-                location          = EXCLUDED.location,
-                created_at        = EXCLUDED.created_at,
-                profile_image_url = EXCLUDED.profile_image_url,
-                karma             = EXCLUDED.karma,
-                follower_count    = EXCLUDED.follower_count,
-                following_count   = EXCLUDED.following_count
-            RETURNING id
-            """,
-            (
-                case_id,
-                profile.platform,
-                profile.username,
-                profile.display_name,
-                profile.bio,
-                profile.location,
-                created_at_dt,
-                profile.profile_image_url,
-                profile.karma,
-                profile.follower_count,
-                profile.following_count,
-            ),
-        )
-        account_id = cur.fetchone()["id"]
-
-        for post in profile.posts:
-            post_dt = datetime.fromtimestamp(
-                post.timestamp, tz=timezone.utc
-            ).isoformat()
-            cur.execute(
-                """
-                INSERT INTO posts
-                (account_id, external_id, text, timestamp, metadata)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (account_id, external_id)
-                DO UPDATE SET
-                    text     = EXCLUDED.text,
-                    metadata = EXCLUDED.metadata
-                """,
-                (
-                    account_id,
-                    post.external_id,
-                    post.text,
-                    post_dt,
-                    json.dumps(post.metadata),
-                )
-            )
-
-        conn.commit()
+        account_id = save_to_db(profile, conn, case_id=case_id)
     finally:
         conn.close()
 
