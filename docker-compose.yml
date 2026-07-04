@@ -34,9 +34,21 @@ services:
             timeout: 5s
             retries: 3
 
+    wa-sidecar:
+        build:
+            context: ./wa_sidecar
+            dockerfile: Dockerfile
+        container_name: aria-wa-sidecar
+        restart: unless-stopped
+        volumes:
+            - wa_auth:/app/.wwebjs_auth
+        ports:
+            - '3333:3333'
+
     backend:
         build:
             context: ./backend
+            dockerfile: Dockerfile
         container_name: aria-backend
         restart: unless-stopped
         env_file:
@@ -44,10 +56,13 @@ services:
         environment:
             REDLIB_URL: http://aria-redlib:8080
             REDLIB_PUBLIC_URL: http://localhost:8080
+            WHATSAPP_SIDECAR_URL: http://aria-wa-sidecar:3333
         depends_on:
             postgres:
                 condition: service_healthy
             redlib:
+                condition: service_started
+            wa-sidecar:
                 condition: service_started
         ports:
             - '8000:8000'
@@ -55,6 +70,9 @@ services:
     frontend:
         build:
             context: ./frontend
+            dockerfile: Dockerfile
+            args:
+                VITE_API_URL: http://localhost:8000
         container_name: aria-frontend
         restart: unless-stopped
         depends_on:
@@ -64,3 +82,4 @@ services:
 
 volumes:
     postgres_data:
+    wa_auth:

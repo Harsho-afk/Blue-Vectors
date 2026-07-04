@@ -247,7 +247,7 @@ export default function CaseDetail() {
                   className="aria-form-input id-row__value"
                   value={row.value}
                   onChange={e => updateNewId(i, "value", e.target.value)}
-                  placeholder="value"
+                  placeholder={row.identifier_type === "phone" ? "+[country code][number] e.g. +917618710294" : "value"}
                   disabled={addingIds}
                 />
                 <select

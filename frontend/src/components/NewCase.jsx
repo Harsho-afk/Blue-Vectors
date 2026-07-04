@@ -104,7 +104,7 @@ export default function NewCase() {
                 className="aria-form-input id-row__value"
                 value={row.value}
                 onChange={e => updateId(i, "value", e.target.value)}
-                placeholder="value"
+                placeholder={row.identifier_type === "phone" ? "+[country code][number] e.g. +917618710294" : "value"}
                 disabled={submitting}
               />
 
@@ -112,7 +112,8 @@ export default function NewCase() {
                 className="id-row__select id-row__platform"
                 value={row.platform_hint}
                 onChange={e => updateId(i, "platform_hint", e.target.value)}
-                disabled={submitting}
+                disabled={submitting || row.identifier_type === "phone"}
+                style={row.identifier_type === "phone" ? { opacity: 0.3, pointerEvents: "none" } : undefined}
               >
                 <option value="">NO PLATFORM</option>
                 <option value="reddit">REDDIT</option>

@@ -3,10 +3,11 @@ import asyncio
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from .twitter import TwitterCollector
+from .phone import collect_phone  # noqa: F401  (re-exported)
 from .reddit import RedditCollector
 from .github import GitHubCollector
 from .instagram import InstagramCollector
-from .models import AccountProfile, log
+from .models import AccountProfile, PhoneProfile, log  # noqa: F401
 
 load_dotenv()
 

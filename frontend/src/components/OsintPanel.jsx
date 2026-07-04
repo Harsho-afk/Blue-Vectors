@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import { API } from "../lib/api";
 import MaigretResults from "./MaigretResults";
 import BreachResults from "./BreachResults";
+import PhoneResults from "./PhoneResults";
 
 export default function OsintPanel({ caseId, identifiers, onAccountImported }) {
   const [lookups, setLookups] = useState([]);
   const [searchingUsername, setSearchingUsername] = useState(null);
   const [searchingEmail, setSearchingEmail] = useState(null);
+  const [searchingPhone, setSearchingPhone] = useState(null);
   const [error, setError] = useState(null);
 
   const fetchLookups = useCallback(() => {
@@ -65,8 +67,31 @@ export default function OsintPanel({ caseId, identifiers, onAccountImported }) {
     }
   };
 
+  const handlePhoneLookup = async (value) => {
+    setSearchingPhone(value);
+    setError(null);
+    try {
+      const res = await fetch(`${API}/api/cases/${caseId}/osint/phone-lookup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ phone: value }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().then(d => d.detail).catch(() => res.statusText);
+        throw new Error(detail);
+      }
+      fetchLookups();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSearchingPhone(null);
+    }
+  };
+
   const usernameIdents = identifiers.filter(i => i.identifier_type === "username");
-  const emailIdents = identifiers.filter(i => i.identifier_type === "email");
+  const emailIdents    = identifiers.filter(i => i.identifier_type === "email");
+  const phoneIdents    = identifiers.filter(i => i.identifier_type === "phone");
 
   return (
     <div className="osint-panel">
@@ -83,7 +108,7 @@ export default function OsintPanel({ caseId, identifiers, onAccountImported }) {
         </div>
       )}
 
-      {(usernameIdents.length > 0 || emailIdents.length > 0) && (
+      {(usernameIdents.length > 0 || emailIdents.length > 0 || phoneIdents.length > 0) && (
         <div className="osint-panel__actions">
           {usernameIdents.map(ident => (
             <div key={ident.id} className="osint-action-row">
@@ -115,6 +140,21 @@ export default function OsintPanel({ caseId, identifiers, onAccountImported }) {
               </button>
             </div>
           ))}
+          {phoneIdents.map(ident => (
+            <div key={ident.id} className="osint-action-row">
+              <span className="osint-action-row__label">
+                <span className="osint-action-row__type">PHONE</span>
+                <span className="osint-action-row__value">{ident.value}</span>
+              </span>
+              <button
+                className="osint-action-btn"
+                disabled={searchingPhone === ident.value}
+                onClick={() => handlePhoneLookup(ident.value)}
+              >
+                {searchingPhone === ident.value ? "LOOKING UP..." : "LOOKUP PHONE ▶"}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -132,6 +172,8 @@ export default function OsintPanel({ caseId, identifiers, onAccountImported }) {
           />
         ) : (lookup.lookup_type === "xposedornot" || lookup.lookup_type === "hibp") ? (
           <BreachResults key={lookup.id} lookup={lookup} />
+        ) : lookup.lookup_type === "phone" ? (
+          <PhoneResults key={lookup.id} lookup={lookup} />
         ) : null
       )}
     </div>

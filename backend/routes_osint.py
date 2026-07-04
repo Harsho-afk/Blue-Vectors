@@ -3,6 +3,7 @@ ARIA — OSINT Lookup routes
 
 POST /api/cases/{case_id}/osint/username-search   { username, max_sites? }  → Maigret results
 POST /api/cases/{case_id}/osint/breach-lookup      { email }                → breach list
+POST /api/cases/{case_id}/osint/phone-lookup       { phone }                → phone OSINT
 GET  /api/cases/{case_id}/osint                    list all OSINT lookups for a case
 POST /api/cases/{case_id}/osint/import-account     { platform, username, url, ... } → account_id
 """
@@ -15,6 +16,7 @@ from pydantic import BaseModel, EmailStr
 
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
+from collector.phone import PhoneCollector
 
 router = APIRouter(prefix="/api/cases", tags=["osint"])
 
@@ -28,6 +30,10 @@ class UsernameSearchRequest(BaseModel):
 
 class BreachLookupRequest(BaseModel):
     email: EmailStr
+
+
+class PhoneLookupRequest(BaseModel):
+    phone: str
 
 
 class ImportAccountRequest(BaseModel):
@@ -113,6 +119,44 @@ async def run_breach_lookup(
         ],
         "error": result.error,
     }
+
+
+@router.post("/{case_id}/osint/phone-lookup")
+async def run_phone_lookup(
+    case_id: int,
+    body: PhoneLookupRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    conn = get_db_conn()
+    try:
+        _check_case_ownership(conn, case_id, current_user["id"])
+    finally:
+        conn.close()
+
+    try:
+        profile = await PhoneCollector().collect(body.phone)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Phone lookup failed: {e}")
+
+    result = profile.to_dict()
+
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (case_id, "phone", body.phone, json.dumps(result)),
+        )
+        lookup_id = cur.fetchone()["id"]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"lookup_id": lookup_id, **result}
 
 
 @router.get("/{case_id}/osint")
