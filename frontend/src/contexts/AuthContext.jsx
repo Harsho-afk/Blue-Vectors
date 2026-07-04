@@ -9,8 +9,8 @@
  *   - logout()    : call POST /api/auth/logout then clear state
  */
 import { createContext, useContext, useEffect, useState } from "react";
+import { API } from "../lib/api";
 
-const API = "http://localhost:8000";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {

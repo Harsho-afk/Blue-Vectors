@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-
-const API = "http://localhost:8000";
+import { API } from "../lib/api";
 
 const EMPTY_ID = { identifier_type: "username", value: "", platform_hint: "" };
 
