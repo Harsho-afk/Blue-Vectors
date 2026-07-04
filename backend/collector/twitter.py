@@ -317,63 +317,96 @@ class TwitterCollector:
             count=page_size,
         )
 
+        skipped_tweets = 0
         while result:
             for tweet in result:
-                is_retweet = tweet.text.startswith("RT @")
-                ts = twitter_ts_to_epoch(tweet.created_at)
+                # A single tweet with an unexpected shape (e.g. a card/entity
+                # type twikit doesn't fully model — polls, Community Notes,
+                # Spaces, ads) can raise mid-parse. Twitter's unofficial API
+                # drifts constantly (see MONKEY PATCH notes above), so treat
+                # each tweet's parsing as independent: log and skip rather
+                # than losing every tweet already fetched for this account.
+                try:
+                    is_retweet = tweet.text.startswith("RT @")
+                    ts = twitter_ts_to_epoch(tweet.created_at)
 
-                media_entities = _tweet_media_to_dicts(tweet)
-                images = [
-                    m["media_url_https"]
-                    for m in media_entities
-                    if m.get("media_url_https")
-                ]
+                    media_entities = _tweet_media_to_dicts(tweet)
+                    images = [
+                        m["media_url_https"]
+                        for m in media_entities
+                        if m.get("media_url_https")
+                    ]
 
-                permalink = f"https://x.com/{username}/status/{tweet.id}"
+                    permalink = f"https://x.com/{username}/status/{tweet.id}"
 
-                posts.append(
-                    Post(
-                        external_id=str(tweet.id),
-                        text=tweet.text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "retweet" if is_retweet else "tweet",
-                            "tweet_id": str(tweet.id),
-                            "url": permalink,
-                            "retweet_count": getattr(tweet, "retweet_count", None),
-                            "favorite_count": getattr(tweet, "favorite_count", None),
-                            "reply_count": getattr(tweet, "reply_count", None),
-                            "quote_count": getattr(tweet, "quote_count", None),
-                            "view_count": getattr(tweet, "view_count", None),
-                            "bookmark_count": getattr(tweet, "bookmark_count", None),
-                            "lang": tweet.lang,
-                            "images": images,
-                            "media": media_entities,
-                            "is_quote_status": getattr(tweet, "is_quote_status", None),
-                            "possibly_sensitive": getattr(
-                                tweet, "possibly_sensitive", None
-                            ),
-                            "hashtags": getattr(tweet, "hashtags", None) or [],
-                            "urls": getattr(tweet, "urls", None) or [],
-                            "user_mentions": getattr(tweet, "user_mentions", None)
-                            or [],
-                            "place": getattr(tweet, "place", None),
-                            "in_reply_to_status_id": getattr(
-                                tweet, "in_reply_to_status_id", None
-                            ),
-                            "edit_history_tweet_ids": getattr(
-                                tweet, "edit_history_tweet_ids", None
-                            )
-                            or [],
-                        },
+                    posts.append(
+                        Post(
+                            external_id=str(tweet.id),
+                            text=tweet.text,
+                            timestamp=ts,
+                            metadata={
+                                "type": "retweet" if is_retweet else "tweet",
+                                "tweet_id": str(tweet.id),
+                                "url": permalink,
+                                "retweet_count": getattr(tweet, "retweet_count", None),
+                                "favorite_count": getattr(
+                                    tweet, "favorite_count", None
+                                ),
+                                "reply_count": getattr(tweet, "reply_count", None),
+                                "quote_count": getattr(tweet, "quote_count", None),
+                                "view_count": getattr(tweet, "view_count", None),
+                                "bookmark_count": getattr(
+                                    tweet, "bookmark_count", None
+                                ),
+                                "lang": tweet.lang,
+                                "images": images,
+                                "media": media_entities,
+                                "is_quote_status": getattr(
+                                    tweet, "is_quote_status", None
+                                ),
+                                "possibly_sensitive": getattr(
+                                    tweet, "possibly_sensitive", None
+                                ),
+                                "hashtags": getattr(tweet, "hashtags", None) or [],
+                                "urls": getattr(tweet, "urls", None) or [],
+                                "user_mentions": getattr(tweet, "user_mentions", None)
+                                or [],
+                                "place": getattr(tweet, "place", None),
+                                "in_reply_to_status_id": getattr(
+                                    tweet, "in_reply_to_status_id", None
+                                ),
+                                "edit_history_tweet_ids": getattr(
+                                    tweet, "edit_history_tweet_ids", None
+                                )
+                                or [],
+                            },
+                        )
                     )
-                )
+                except Exception as exc:
+                    skipped_tweets += 1
+                    tweet_id = getattr(tweet, "id", "unknown")
+                    log.warning(
+                        "Twitter: @%s — failed to parse tweet %s (%s: %s), skipping",
+                        username,
+                        tweet_id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    continue
             if len(posts) >= limit:
                 break
             try:
                 result = await result.next()
             except Exception:
                 break
+
+        if skipped_tweets:
+            log.warning(
+                "Twitter: @%s — skipped %d unparseable tweet(s), kept %d",
+                username,
+                skipped_tweets,
+                len(posts),
+            )
 
         posts = posts[:limit]
 
