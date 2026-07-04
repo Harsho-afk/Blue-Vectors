@@ -19,7 +19,6 @@ from auth import (
     hash_password,
     verify_password,
     JWT_EXPIRE_MINUTES,
-    DB_TYPE,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -75,10 +74,7 @@ def register(body: RegisterRequest, response: Response):
         cur = conn.cursor()
 
         # Check for duplicate
-        if DB_TYPE == "sqlite":
-            cur.execute("SELECT id FROM users WHERE email = ?", (body.email,))
-        else:
-            cur.execute("SELECT id FROM users WHERE email = %s", (body.email,))
+        cur.execute("SELECT id FROM users WHERE email = %s", (body.email,))
         
         if cur.fetchone():
             raise HTTPException(
@@ -88,27 +84,15 @@ def register(body: RegisterRequest, response: Response):
 
         pw_hash = hash_password(body.password)
         
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                """
-                INSERT INTO users (email, password_hash, full_name)
-                VALUES (?, ?, ?)
-                """,
-                (body.email, pw_hash, body.full_name),
-            )
-            conn.commit()
-            # Get the last inserted row
-            cur.execute("SELECT id, email, full_name, role FROM users WHERE email = ?", (body.email,))
-        else:
-            cur.execute(
-                """
-                INSERT INTO users (email, password_hash, full_name)
-                VALUES (%s, %s, %s)
-                RETURNING id, email, full_name, role
-                """,
-                (body.email, pw_hash, body.full_name),
-            )
-            conn.commit()
+        cur.execute(
+            """
+            INSERT INTO users (email, password_hash, full_name)
+            VALUES (%s, %s, %s)
+            RETURNING id, email, full_name, role
+            """,
+            (body.email, pw_hash, body.full_name),
+        )
+        conn.commit()
         
         user = dict(cur.fetchone())
     finally:
@@ -129,16 +113,10 @@ def login(body: LoginRequest, response: Response):
     try:
         cur = conn.cursor()
         
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, email, password_hash, full_name, role FROM users WHERE email = ?",
-                (body.email,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, email, password_hash, full_name, role FROM users WHERE email = %s",
-                (body.email,),
-            )
+        cur.execute(
+            "SELECT id, email, password_hash, full_name, role FROM users WHERE email = %s",
+            (body.email,),
+        )
         
         user = cur.fetchone()
     finally:

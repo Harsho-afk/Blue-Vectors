@@ -30,7 +30,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 log = logging.getLogger("aria.collector")
 
 
@@ -40,12 +42,10 @@ log = logging.getLogger("aria.collector")
 # Remove this block once twikit publishes a fix.
 # ──────────────────────────────────────────────
 _tx_mod = __import__(
-    'twikit.x_client_transaction.transaction',
-    fromlist=['ClientTransaction']
+    "twikit.x_client_transaction.transaction", fromlist=["ClientTransaction"]
 )
 _tx_mod.ON_DEMAND_FILE_REGEX = _re.compile(
-    r',(\d+):["\']ondemand\.s["\']',
-    flags=(_re.VERBOSE | _re.MULTILINE)
+    r',(\d+):["\']ondemand\.s["\']', flags=(_re.VERBOSE | _re.MULTILINE)
 )
 _tx_mod.ON_DEMAND_HASH_PATTERN = r',{}:"([0-9a-f]+)"'
 # Ensure INDICES_REGEX is present — twikit 2.3+ may not define it at module level.
@@ -84,19 +84,20 @@ _tx_mod.ClientTransaction.get_indices = _patched_get_indices
 # MONKEY PATCH 2: twikit User.__init__ crashes when bio has no URLs
 # ──────────────────────────────────────────────
 from twikit.user import User as _TwikitUser
+
 _original_user_init = _TwikitUser.__init__
 
 
 def _patched_user_init(self, client, data):
     # Ensure the entities/description/urls path always exists
-    legacy = data.get('legacy', data)
-    entities = legacy.setdefault('entities', {})
-    description = entities.setdefault('description', {})
-    description.setdefault('urls', [])
+    legacy = data.get("legacy", data)
+    entities = legacy.setdefault("entities", {})
+    description = entities.setdefault("description", {})
+    description.setdefault("urls", [])
     # Twitter's API omits these fields for some accounts; twikit does a hard
     # dict lookup and crashes with KeyError if they're absent.
-    legacy.setdefault('withheld_in_countries', [])
-    legacy.setdefault('withheld_scope', None)
+    legacy.setdefault("withheld_in_countries", [])
+    legacy.setdefault("withheld_scope", None)
     _original_user_init(self, client, data)
 
 
@@ -108,27 +109,28 @@ _TwikitUser.__init__ = _patched_user_init
 # Data schemas
 # ──────────────────────────────────────────────
 
+
 @dataclass
 class Post:
     text: str
-    timestamp: float        # Unix epoch (UTC)
+    timestamp: float  # Unix epoch (UTC)
     metadata: dict = field(default_factory=dict)
 
 
 @dataclass
 class AccountProfile:
-    platform: str           # "reddit" | "twitter"
+    platform: str  # "reddit" | "twitter"
     username: str
     display_name: str
     bio: str
     location: str
     profile_image_url: str
     created_utc: Optional[float]
-    posts: list = field(default_factory=list)       # list[Post]
+    posts: list = field(default_factory=list)  # list[Post]
     subreddits: list = field(default_factory=list)  # Reddit only
-    karma: Optional[int] = None                     # Reddit only
-    follower_count: Optional[int] = None            # Twitter only
-    following_count: Optional[int] = None           # Twitter only
+    karma: Optional[int] = None  # Reddit only
+    follower_count: Optional[int] = None  # Twitter only
+    following_count: Optional[int] = None  # Twitter only
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict — safe for JSON and PostgreSQL JSONB."""
@@ -138,6 +140,7 @@ class AccountProfile:
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
+
 
 def _twitter_ts_to_epoch(ts_str: str) -> float:
     """
@@ -169,7 +172,9 @@ def _extract_image_urls(md_el) -> list:
         href = a.get("href", "")
         if not href:
             continue
-        is_image_ext = any(href.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS)
+        is_image_ext = any(
+            href.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS
+        )
         is_image_host = any(host in href for host in _IMAGE_HOSTS)
         if is_image_ext or is_image_host:
             if not href.startswith("http"):
@@ -270,7 +275,11 @@ def _fetch_reddit_avatar(username: str) -> str:
                 continue
             # Skip anti-bot challenge pages
             low = r.text[:2000].lower()
-            if "just a moment" in low or "enable cookies" in low or "checking your browser" in low:
+            if (
+                "just a moment" in low
+                or "enable cookies" in low
+                or "checking your browser" in low
+            ):
                 continue
 
             soup = BeautifulSoup(r.text, "html.parser")
@@ -285,7 +294,9 @@ def _fetch_reddit_avatar(username: str) -> str:
         except Exception:
             continue
 
-    log.debug("Reddit avatar: unavailable for u/%s (no OAuth creds, no Redlib)", username)
+    log.debug(
+        "Reddit avatar: unavailable for u/%s (no OAuth creds, no Redlib)", username
+    )
     return ""
 
 
@@ -316,7 +327,12 @@ class RedditCollector:
         if r.status_code != 200:
             raise ValueError(f"{base} returned {r.status_code} for {path}")
         low = r.text[:2000].lower()
-        if "just a moment" in low or "enable cookies" in low or "checking your browser" in low or "not a bot" in low:
+        if (
+            "just a moment" in low
+            or "enable cookies" in low
+            or "checking your browser" in low
+            or "not a bot" in low
+        ):
             raise ValueError(f"{base} returned anti-bot challenge for {path}")
         return r
 
@@ -364,19 +380,25 @@ class RedditCollector:
         karma_els = titlebox.select("span.karma")
         pk, ck = 0, 0
         if len(karma_els) >= 1:
-            try: pk = int(karma_els[0].text.strip().replace(",", ""))
-            except Exception: pass
+            try:
+                pk = int(karma_els[0].text.strip().replace(",", ""))
+            except Exception:
+                pass
         if len(karma_els) >= 2:
-            try: ck = int(karma_els[1].text.strip().replace(",", ""))
-            except Exception: pass
+            try:
+                ck = int(karma_els[1].text.strip().replace(",", ""))
+            except Exception:
+                pass
         karma = pk + ck
 
         age_el = titlebox.select_one(".age time")
         if age_el:
             dt_str = age_el.get("datetime", "")
             if dt_str:
-                try: created_utc = datetime.fromisoformat(dt_str).timestamp()
-                except Exception: pass
+                try:
+                    created_utc = datetime.fromisoformat(dt_str).timestamp()
+                except Exception:
+                    pass
 
         return display_name, bio, karma, created_utc
 
@@ -417,8 +439,10 @@ class RedditCollector:
                 if time_el:
                     dt_str = time_el.get("datetime", "")
                     if dt_str:
-                        try: ts = datetime.fromisoformat(dt_str).timestamp()
-                        except Exception: pass
+                        try:
+                            ts = datetime.fromisoformat(dt_str).timestamp()
+                        except Exception:
+                            pass
 
                 sub = item.get("data-subreddit", "")
                 if sub and not sub.startswith("u_"):
@@ -428,8 +452,10 @@ class RedditCollector:
 
                 score = 0
                 if score_el:
-                    try: score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception: pass
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
 
                 images = []
                 thumb = _get_thumbnail(item)
@@ -437,15 +463,27 @@ class RedditCollector:
                     images.append(thumb)
                 images.extend(body_images)
                 data_url = item.get("data-url", "")
-                if data_url and any(data_url.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS):
+                if data_url and any(
+                    data_url.split("?")[0].lower().endswith(ext)
+                    for ext in _IMAGE_EXTENSIONS
+                ):
                     if not data_url.startswith("http"):
                         data_url = "https://reddit.com" + data_url
                     images.append(data_url)
 
-                posts.append(Post(text=text, timestamp=ts, metadata={
-                    "type": "submission", "subreddit": sub, "score": score,
-                    "url": url, "images": images,
-                }))
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "submission",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                            "images": images,
+                        },
+                    )
+                )
                 fetched += 1
 
             next_el = soup.select_one(".next-button a")
@@ -495,8 +533,10 @@ class RedditCollector:
                 if time_el:
                     dt_str = time_el.get("datetime", "")
                     if dt_str:
-                        try: ts = datetime.fromisoformat(dt_str).timestamp()
-                        except Exception: pass
+                        try:
+                            ts = datetime.fromisoformat(dt_str).timestamp()
+                        except Exception:
+                            pass
 
                 sub = item.get("data-subreddit", "")
                 if sub and not sub.startswith("u_"):
@@ -506,13 +546,24 @@ class RedditCollector:
 
                 score = 0
                 if score_el:
-                    try: score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception: pass
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
 
-                posts.append(Post(text=text, timestamp=ts, metadata={
-                    "type": "comment", "subreddit": sub, "score": score,
-                    "url": url, "images": images,
-                }))
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "comment",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                            "images": images,
+                        },
+                    )
+                )
                 fetched += 1
 
             next_el = soup.select_one(".next-button a")
@@ -534,7 +585,9 @@ class RedditCollector:
         if name_el:
             display_name = name_el.text.strip().lstrip("u/").strip()
 
-        bio_el = soup.select_one("#user_description") or soup.select_one("p.description")
+        bio_el = soup.select_one("#user_description") or soup.select_one(
+            "p.description"
+        )
         if bio_el:
             bio = bio_el.text.strip()
 
@@ -546,14 +599,20 @@ class RedditCollector:
                 if i >= len(values):
                     break
                 if "karma" in label:
-                    try: karma = int(values[i].replace(",", "").replace(".", ""))
-                    except Exception: pass
+                    try:
+                        karma = int(values[i].replace(",", "").replace(".", ""))
+                    except Exception:
+                        pass
                 elif "created" in label:
                     try:
                         raw = values[i].strip().replace("'", "20")
-                        created_utc = datetime.strptime(raw, "%b %d %Y").replace(
-                            tzinfo=timezone.utc).timestamp()
-                    except Exception: pass
+                        created_utc = (
+                            datetime.strptime(raw, "%b %d %Y")
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
 
         img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
         if img_el:
@@ -602,10 +661,15 @@ class RedditCollector:
                 ts = 0.0
                 if created_el and created_el.get("title"):
                     try:
-                        ts = datetime.strptime(
-                            created_el["title"], "%b %d %Y, %H:%M:%S UTC"
-                        ).replace(tzinfo=timezone.utc).timestamp()
-                    except Exception: pass
+                        ts = (
+                            datetime.strptime(
+                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
+                            )
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
 
                 sub = ""
                 if sub_el:
@@ -617,12 +681,23 @@ class RedditCollector:
 
                 score = 0
                 if score_el:
-                    try: score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception: pass
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
 
-                posts.append(Post(text=text, timestamp=ts, metadata={
-                    "type": "submission", "subreddit": sub, "score": score, "url": url,
-                }))
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "submission",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                        },
+                    )
+                )
                 fetched += 1
 
             next_el = soup.select_one("a[rel='next']")
@@ -665,7 +740,9 @@ class RedditCollector:
                 clean_lines = []
                 for line in raw_text.splitlines():
                     stripped = line.strip()
-                    if stripped.startswith("/preview/pre/") or stripped.startswith("/img/"):
+                    if stripped.startswith("/preview/pre/") or stripped.startswith(
+                        "/img/"
+                    ):
                         images.append(base + stripped)
                     else:
                         clean_lines.append(line)
@@ -680,10 +757,15 @@ class RedditCollector:
                 ts = 0.0
                 if created_el and created_el.get("title"):
                     try:
-                        ts = datetime.strptime(
-                            created_el["title"], "%b %d %Y, %H:%M:%S UTC"
-                        ).replace(tzinfo=timezone.utc).timestamp()
-                    except Exception: pass
+                        ts = (
+                            datetime.strptime(
+                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
+                            )
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
 
                 sub = ""
                 if sub_el:
@@ -695,13 +777,24 @@ class RedditCollector:
 
                 score = 0
                 if score_el:
-                    try: score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception: pass
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
 
-                posts.append(Post(text=text, timestamp=ts, metadata={
-                    "type": "comment", "subreddit": sub, "score": score,
-                    "url": url, "images": images,
-                }))
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "comment",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                            "images": images,
+                        },
+                    )
+                )
                 fetched += 1
 
             next_el = soup.find("a", string=lambda t: t and t.strip().upper() == "NEXT")
@@ -721,13 +814,18 @@ class RedditCollector:
         base, profile_soup, stype = self._pick_source(username)
 
         if stype == "oldreddit":
-            display_name, bio, karma, created_utc = self._parse_profile_oldreddit(profile_soup)
+            display_name, bio, karma, created_utc = self._parse_profile_oldreddit(
+                profile_soup
+            )
             profile_image_url = _fetch_reddit_avatar(username)
-            sub_posts, sub_subs = self._parse_submissions_oldreddit(base, username, limit)
+            sub_posts, sub_subs = self._parse_submissions_oldreddit(
+                base, username, limit
+            )
             com_posts, com_subs = self._parse_comments_oldreddit(base, username, limit)
         else:
-            display_name, bio, karma, created_utc, profile_image_url = self._parse_profile_redlib(
-                profile_soup, base)
+            display_name, bio, karma, created_utc, profile_image_url = (
+                self._parse_profile_redlib(profile_soup, base)
+            )
             sub_posts, sub_subs = self._parse_submissions_redlib(base, username, limit)
             com_posts, com_subs = self._parse_comments_redlib(base, username, limit)
 
@@ -737,8 +835,13 @@ class RedditCollector:
 
         display_name = display_name or username
 
-        log.info("Reddit: u/%s — %d posts, %d subreddits (via %s)",
-                 username, len(all_posts), len(all_subs), stype)
+        log.info(
+            "Reddit: u/%s — %d posts, %d subreddits (via %s)",
+            username,
+            len(all_posts),
+            len(all_subs),
+            stype,
+        )
 
         return AccountProfile(
             platform="reddit",
@@ -757,6 +860,7 @@ class RedditCollector:
 # ──────────────────────────────────────────────
 # Twitter collector  (twikit — browser cookies)
 # ──────────────────────────────────────────────
+
 
 class TwitterCollector:
     """
@@ -783,7 +887,7 @@ class TwitterCollector:
         if self._logged_in:
             return
 
-        ct0        = os.environ.get("TWITTER_CT0")
+        ct0 = os.environ.get("TWITTER_CT0")
         auth_token = os.environ.get("TWITTER_AUTH_TOKEN")
 
         if not ct0 or not auth_token:
@@ -848,7 +952,9 @@ class TwitterCollector:
                     media_list = getattr(tweet, "media", None) or []
                     for m in media_list:
                         # twikit media object: m.type ("photo"/"video"), m.media_url_https
-                        media_url = getattr(m, "media_url_https", None) or getattr(m, "url", None)
+                        media_url = getattr(m, "media_url_https", None) or getattr(
+                            m, "url", None
+                        )
                         if media_url:
                             images.append(media_url)
                 except Exception:
@@ -856,20 +962,22 @@ class TwitterCollector:
 
                 permalink = f"https://x.com/{username}/status/{tweet.id}"
 
-                posts.append(Post(
-                    text=tweet.text,
-                    timestamp=ts,
-                    metadata={
-                        "type":           "tweet",
-                        "tweet_id":       str(tweet.id),
-                        "url":            permalink,
-                        "retweet_count":  tweet.retweet_count,
-                        "favorite_count": tweet.favorite_count,
-                        "reply_count":    tweet.reply_count,
-                        "lang":           tweet.lang,
-                        "images":         images,
-                    },
-                ))
+                posts.append(
+                    Post(
+                        text=tweet.text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "tweet",
+                            "tweet_id": str(tweet.id),
+                            "url": permalink,
+                            "retweet_count": tweet.retweet_count,
+                            "favorite_count": tweet.favorite_count,
+                            "reply_count": tweet.reply_count,
+                            "lang": tweet.lang,
+                            "images": images,
+                        },
+                    )
+                )
             if len(posts) >= limit:
                 break
             try:
@@ -888,7 +996,9 @@ class TwitterCollector:
             bio=user.description or "",
             location=user.location or "",
             # twikit returns _normal (48×48); replace with _400x400 for a usable size
-            profile_image_url=(user.profile_image_url or "").replace("_normal", "_400x400"),
+            profile_image_url=(user.profile_image_url or "").replace(
+                "_normal", "_400x400"
+            ),
             created_utc=created_utc,
             posts=posts,
             follower_count=user.followers_count,
@@ -932,7 +1042,9 @@ def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
     raise ValueError(f"Unhandled platform: {platform}")
 
 
-async def collect_async(platform: str, username: str, limit: int = 100) -> AccountProfile:
+async def collect_async(
+    platform: str, username: str, limit: int = 100
+) -> AccountProfile:
     """
     Async version of collect(). Use inside FastAPI or other async contexts.
 
@@ -965,6 +1077,7 @@ async def _collect_twitter(username: str, limit: int) -> AccountProfile:
 # PostgreSQL storage helper
 # ──────────────────────────────────────────────
 
+
 def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
     """
     Upsert an AccountProfile into PostgreSQL.
@@ -982,7 +1095,8 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
 
     created_at_dt = (
         datetime.fromtimestamp(profile.created_utc, tz=timezone.utc)
-        if profile.created_utc is not None else None
+        if profile.created_utc is not None
+        else None
     )
 
     cur.execute(
@@ -1008,7 +1122,7 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
             profile.profile_image_url,
         ),
     )
-    account_id: int = cur.fetchone()[0]
+    account_id: int = cur.fetchone()["id"]
 
     for post in profile.posts:
         post_dt = datetime.fromtimestamp(post.timestamp, tz=timezone.utc)
@@ -1024,7 +1138,10 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
     conn.commit()
     log.info(
         "DB: saved account_id=%d (%s/%s) under case_id=%d",
-        account_id, profile.platform, profile.username, case_id,
+        account_id,
+        profile.platform,
+        profile.username,
+        case_id,
     )
     return account_id
 
@@ -1049,7 +1166,7 @@ if __name__ == "__main__":
 
     if args.cmd == "collect":
         profile = collect(args.platform, args.username, limit=args.limit)
-        output  = json.dumps(profile.to_dict(), indent=2, ensure_ascii=False)
+        output = json.dumps(profile.to_dict(), indent=2, ensure_ascii=False)
         if args.out:
             with open(args.out, "w", encoding="utf-8") as fh:
                 fh.write(output)

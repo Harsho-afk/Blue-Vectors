@@ -14,7 +14,11 @@ app = FastAPI(title="ARIA API")
 # Using "*" with credentials silently breaks cookie auth.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],   # Exact Vite dev origin
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:80",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,                    # Required for HttpOnly cookies
     allow_methods=["*"],
     allow_headers=["*"],

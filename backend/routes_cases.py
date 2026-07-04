@@ -15,13 +15,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from auth import get_current_user, get_db_conn, DB_TYPE
+from auth import get_current_user, get_db_conn
 from collector import collect_async
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 
 # ── Pydantic Models ───────────────────────────────────────────────────────────
+
 
 class IdentifierIn(BaseModel):
     identifier_type: Literal["username", "email", "phone", "profile_url"]
@@ -89,84 +90,78 @@ class CaseDetailResponse(BaseModel):
 
 # ── Helper: Ownership check ───────────────────────────────────────────────────
 
+
 def _get_case_owner(conn, case_id: int) -> Optional[int]:
     """Return investigator_id if case exists, else None."""
     cur = conn.cursor()
-    if DB_TYPE == "sqlite":
-        cur.execute("SELECT investigator_id FROM cases WHERE id = ?", (case_id,))
-    else:
-        cur.execute("SELECT investigator_id FROM cases WHERE id = %s", (case_id,))
+    cur.execute(
+        "SELECT investigator_id FROM cases WHERE id = %s",
+        (case_id,),
+    )
     row = cur.fetchone()
-    return row[0] if row else None
+    return row["investigator_id"] if row else None
 
 
 def _check_case_ownership(conn, case_id: int, user_id: int):
     """Raise 404 if case doesn't exist or 403 if user doesn't own it."""
     owner_id = _get_case_owner(conn, case_id)
     if owner_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Case not found"
+        )
     if owner_id != user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Case not found"
+        )
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_case(body: CaseCreate, current_user: dict = Depends(get_current_user)):
     """
     Create a new case with one or more seed identifiers.
-    
+
     Body: { title, identifiers: [{ identifier_type, value, platform_hint? }] }
     Returns: { case_id }
     """
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        
+
         # Insert case
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "INSERT INTO cases (investigator_id, title, status) VALUES (?, ?, 'open')",
-                (current_user["id"], body.title),
-            )
-            conn.commit()
-            # Get last inserted id
-            cur.execute("SELECT last_insert_rowid() as id")
-            case_id = cur.fetchone()[0]
-        else:
-            cur.execute(
-                """
-                INSERT INTO cases (investigator_id, title, status)
-                VALUES (%s, %s, 'open')
-                RETURNING id
-                """,
-                (current_user["id"], body.title),
-            )
-            case_id = cur.fetchone()[0]
-        
+        cur.execute(
+            """
+            INSERT INTO cases (investigator_id, title, status)
+            VALUES (%s, %s, 'open')
+            RETURNING id
+            """,
+            (current_user["id"], body.title),
+        )
+
+        case_id = cur.fetchone()["id"]
+
         # Insert identifiers
         for identifier in body.identifiers:
-            if DB_TYPE == "sqlite":
-                cur.execute(
-                    """
-                    INSERT INTO case_identifiers (case_id, identifier_type, value, platform_hint)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (case_id, identifier.identifier_type, identifier.value, identifier.platform_hint),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO case_identifiers (case_id, identifier_type, value, platform_hint)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (case_id, identifier.identifier_type, identifier.value, identifier.platform_hint),
-                )
-        
+            cur.execute(
+                """
+                INSERT INTO case_identifiers
+                (case_id, identifier_type, value, platform_hint)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    case_id,
+                    identifier.identifier_type,
+                    identifier.value,
+                    identifier.platform_hint,
+                ),
+            )
+
         conn.commit()
     finally:
         conn.close()
-    
+
     return {"case_id": case_id}
 
 
@@ -179,31 +174,20 @@ def list_cases(current_user: dict = Depends(get_current_user)):
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                """
-                SELECT id, investigator_id, title, status, created_at, closed_at
-                FROM cases
-                WHERE investigator_id = ?
-                ORDER BY created_at DESC
-                """,
-                (current_user["id"],),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT id, investigator_id, title, status, created_at, closed_at
-                FROM cases
-                WHERE investigator_id = %s
-                ORDER BY created_at DESC
-                """,
-                (current_user["id"],),
-            )
-        
+        cur.execute(
+            """
+            SELECT id, investigator_id, title, status, created_at, closed_at
+            FROM cases
+            WHERE investigator_id = %s
+            ORDER BY created_at DESC
+            """,
+            (current_user["id"],),
+        )
+
         cases = [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
-    
+
     return {
         "cases": [
             {
@@ -229,77 +213,47 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
     try:
         # Check ownership
         _check_case_ownership(conn, case_id, current_user["id"])
-        
+
         cur = conn.cursor()
-        
+
         # Case
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, investigator_id, title, status, created_at, closed_at FROM cases WHERE id = ?",
-                (case_id,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, investigator_id, title, status, created_at, closed_at FROM cases WHERE id = %s",
-                (case_id,),
-            )
+        cur.execute(
+            "SELECT id, investigator_id, title, status, created_at, closed_at FROM cases WHERE id = %s",
+            (case_id,),
+        )
         case_row = dict(cur.fetchone())
-        
+
         # Identifiers
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, case_id, identifier_type, value, platform_hint, created_at FROM case_identifiers WHERE case_id = ?",
-                (case_id,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, case_id, identifier_type, value, platform_hint, created_at FROM case_identifiers WHERE case_id = %s",
-                (case_id,),
-            )
+        cur.execute(
+            "SELECT id, case_id, identifier_type, value, platform_hint, created_at FROM case_identifiers WHERE case_id = %s",
+            (case_id,),
+        )
         identifiers = [dict(row) for row in cur.fetchall()]
-        
+
         # Accounts + their posts
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count FROM accounts WHERE case_id = ?",
-                (case_id,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count FROM accounts WHERE case_id = %s",
-                (case_id,),
-            )
+        cur.execute(
+            "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count FROM accounts WHERE case_id = %s",
+            (case_id,),
+        )
         accounts = [dict(row) for row in cur.fetchall()]
 
         # Fetch posts for each account
         for acc in accounts:
-            if DB_TYPE == "sqlite":
-                cur.execute(
-                    "SELECT id, account_id, text, timestamp, metadata FROM posts WHERE account_id = ? ORDER BY timestamp DESC",
-                    (acc["id"],),
-                )
-            else:
-                cur.execute(
-                    "SELECT id, account_id, text, timestamp, metadata FROM posts WHERE account_id = %s ORDER BY timestamp DESC",
-                    (acc["id"],),
-                )
+            cur.execute(
+                "SELECT id, account_id, text, timestamp, metadata FROM posts WHERE account_id = %s ORDER BY timestamp DESC",
+                (acc["id"],),
+            )
             acc["posts"] = [dict(row) for row in cur.fetchall()]
 
         # Linkage results
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, case_id, account_a_id, account_b_id, confidence, shap_json, created_at FROM linkage_results WHERE case_id = ?",
-                (case_id,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, case_id, account_a_id, account_b_id, confidence, shap_json, created_at FROM linkage_results WHERE case_id = %s",
-                (case_id,),
-            )
+        cur.execute(
+            "SELECT id, case_id, account_a_id, account_b_id, confidence, shap_json, created_at FROM linkage_results WHERE case_id = %s",
+            (case_id,),
+        )
         results = [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
-    
+
     return {
         "case": {
             "id": case_row["id"],
@@ -339,7 +293,11 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
                         "id": p["id"],
                         "text": p["text"],
                         "timestamp": str(p["timestamp"]),
-                        "metadata": json.loads(p["metadata"]) if isinstance(p["metadata"], str) else p["metadata"],
+                        "metadata": (
+                            json.loads(p["metadata"])
+                            if isinstance(p["metadata"], str)
+                            else p["metadata"]
+                        ),
                     }
                     for p in a.get("posts", [])
                 ],
@@ -371,13 +329,7 @@ def delete_case(case_id: int, current_user: dict = Depends(get_current_user)):
     try:
         # Check ownership
         _check_case_ownership(conn, case_id, current_user["id"])
-        
-        cur = conn.cursor()
-        if DB_TYPE == "sqlite":
-            cur.execute("DELETE FROM cases WHERE id = ?", (case_id,))
-        else:
-            cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
-
+        cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
         conn.commit()
     finally:
         conn.close()
@@ -398,16 +350,10 @@ def add_identifiers(
         _check_case_ownership(conn, case_id, current_user["id"])
         cur = conn.cursor()
         for ident in body:
-            if DB_TYPE == "sqlite":
-                cur.execute(
-                    "INSERT INTO case_identifiers (case_id, identifier_type, value, platform_hint) VALUES (?, ?, ?, ?)",
-                    (case_id, ident.identifier_type, ident.value, ident.platform_hint),
-                )
-            else:
-                cur.execute(
-                    "INSERT INTO case_identifiers (case_id, identifier_type, value, platform_hint) VALUES (%s, %s, %s, %s)",
-                    (case_id, ident.identifier_type, ident.value, ident.platform_hint),
-                )
+            cur.execute(
+                "INSERT INTO case_identifiers (case_id, identifier_type, value, platform_hint) VALUES (%s, %s, %s, %s)",
+                (case_id, ident.identifier_type, ident.value, ident.platform_hint),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -442,75 +388,52 @@ async def collect_for_case(
 
         created_at_dt = None
         if profile.created_utc is not None:
-            created_at_dt = datetime.fromtimestamp(profile.created_utc, tz=timezone.utc).isoformat()
-
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                """
-                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (case_id, platform, username) DO UPDATE SET
-                    display_name      = excluded.display_name,
-                    bio               = excluded.bio,
-                    location          = excluded.location,
-                    created_at        = excluded.created_at,
-                    profile_image_url = excluded.profile_image_url,
-                    karma             = excluded.karma,
-                    follower_count    = excluded.follower_count,
-                    following_count   = excluded.following_count
-                """,
-                (case_id, profile.platform, profile.username, profile.display_name,
-                 profile.bio, profile.location, created_at_dt, profile.profile_image_url,
-                 profile.karma, profile.follower_count, profile.following_count),
-            )
-            conn.commit()
-            cur.execute(
-                "SELECT id FROM accounts WHERE case_id = ? AND platform = ? AND username = ?",
-                (case_id, profile.platform, profile.username),
-            )
-            account_id = cur.fetchone()[0]
-        else:
-            cur.execute(
-                """
-                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (case_id, platform, username) DO UPDATE SET
-                    display_name      = EXCLUDED.display_name,
-                    bio               = EXCLUDED.bio,
-                    location          = EXCLUDED.location,
-                    created_at        = EXCLUDED.created_at,
-                    profile_image_url = EXCLUDED.profile_image_url,
-                    karma             = EXCLUDED.karma,
-                    follower_count    = EXCLUDED.follower_count,
-                    following_count   = EXCLUDED.following_count
-                RETURNING id
-                """,
-                (case_id, profile.platform, profile.username, profile.display_name,
-                 profile.bio, profile.location, created_at_dt, profile.profile_image_url,
-                 profile.karma, profile.follower_count, profile.following_count),
-            )
-            account_id = cur.fetchone()[0]
+            created_at_dt = datetime.fromtimestamp(
+                profile.created_utc, tz=timezone.utc
+            ).isoformat()
+        cur.execute(
+            """
+            INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (case_id, platform, username) DO UPDATE SET
+                display_name      = EXCLUDED.display_name,
+                bio               = EXCLUDED.bio,
+                location          = EXCLUDED.location,
+                created_at        = EXCLUDED.created_at,
+                profile_image_url = EXCLUDED.profile_image_url,
+                karma             = EXCLUDED.karma,
+                follower_count    = EXCLUDED.follower_count,
+                following_count   = EXCLUDED.following_count
+            RETURNING id
+            """,
+            (
+                case_id,
+                profile.platform,
+                profile.username,
+                profile.display_name,
+                profile.bio,
+                profile.location,
+                created_at_dt,
+                profile.profile_image_url,
+                profile.karma,
+                profile.follower_count,
+                profile.following_count,
+            ),
+        )
+        account_id = cur.fetchone()["id"]
 
         for post in profile.posts:
-            post_dt = datetime.fromtimestamp(post.timestamp, tz=timezone.utc).isoformat()
-            if DB_TYPE == "sqlite":
-                cur.execute(
-                    """
-                    INSERT INTO posts (account_id, text, timestamp, metadata)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (account_id, post.text, post_dt, json.dumps(post.metadata)),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO posts (account_id, text, timestamp, metadata)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (account_id, post.text, post_dt, json.dumps(post.metadata)),
-                )
+            post_dt = datetime.fromtimestamp(
+                post.timestamp, tz=timezone.utc
+            ).isoformat()
+            cur.execute(
+                """
+                INSERT INTO posts (account_id, text, timestamp, metadata)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (account_id, post.text, post_dt, json.dumps(post.metadata)),
+            )
 
         conn.commit()
     finally:
