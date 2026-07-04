@@ -399,7 +399,7 @@ def save_username_search(conn, case_id: int, result: UsernameSearchResult) -> in
         (case_id, result.username, result_json),
     )
     conn.commit()
-    return cur.fetchone()[0]
+    return cur.fetchone()["id"]
 
 
 def save_breach_lookup(conn, case_id: int, result: BreachLookupResult) -> int:
@@ -415,7 +415,7 @@ def save_breach_lookup(conn, case_id: int, result: BreachLookupResult) -> int:
         (case_id, result.email, result_json),
     )
     conn.commit()
-    return cur.fetchone()[0]
+    return cur.fetchone()["id"]
 
 
 # ──────────────────────────────────────────────
