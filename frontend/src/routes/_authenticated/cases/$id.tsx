@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Download,
   ExternalLink,
+  FileText,
   FolderOpen,
   GitMerge,
   Globe,
@@ -90,6 +91,7 @@ import { InvestigationRunner } from '@/components/investigation-runner'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { OsintPanel } from '@/components/osint-panel'
+import { ReportsPanel } from '@/components/reports-panel'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search as SearchBar } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
@@ -163,6 +165,7 @@ type CaseSection =
   | 'timeline'
   | 'insights'
   | 'intelligence'
+  | 'reports'
 
 // ── Helpers ──
 
@@ -185,6 +188,24 @@ const PLACEHOLDERS: Record<string, string> = {
   email: 'e.g. johndoe@example.com',
   phone: 'e.g. +1234567890',
   profile_url: 'e.g. https://reddit.com/u/johndoe',
+}
+
+function parseProfileUrl(
+  url: string
+): { platform: string; username: string } | null {
+  const patterns: Array<[RegExp, string]> = [
+    [/(?:reddit\.com|old\.reddit\.com)\/u(?:ser)?\/([A-Za-z0-9_-]+)/i, 'reddit'],
+    [/(?:twitter\.com|x\.com)\/([A-Za-z0-9_]+)/i, 'twitter'],
+    [/github\.com\/([A-Za-z0-9_-]+)/i, 'github'],
+    [/instagram\.com\/([A-Za-z0-9_.]+)/i, 'instagram'],
+  ]
+  for (const [re, platform] of patterns) {
+    const m = url.match(re)
+    if (m && !['explore', 'search', 'about', 'settings', 'login'].includes(m[1].toLowerCase())) {
+      return { platform, username: m[1] }
+    }
+  }
+  return null
 }
 
 function formatDate(iso: string) {
@@ -336,30 +357,78 @@ function CaseDetail() {
     value: string
     identifier_type?: string
   }) => {
-    if (identifier.identifier_type && identifier.identifier_type !== 'username')
+    if (
+      identifier.identifier_type &&
+      identifier.identifier_type !== 'username' &&
+      identifier.identifier_type !== 'profile_url'
+    )
       return
-    const platform = identifier.platform_hint || 'reddit'
     const key = identifier.id
     setCollecting((prev) => ({ ...prev, [key]: true }))
     setError(null)
 
     try {
-      const res = await fetch(`${API}/api/cases/${id}/collect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          platform,
-          username: identifier.value,
-          include_social_graph: true,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res
-          .json()
-          .then((d) => d.detail)
-          .catch(() => res.statusText)
-        throw new Error(err)
+      if (identifier.identifier_type === 'profile_url') {
+        // Parse URL to extract platform + username, then collect
+        const parsed = parseProfileUrl(identifier.value)
+        if (!parsed) throw new Error('Could not parse platform/username from URL')
+        const res = await fetch(`${API}/api/cases/${id}/collect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            platform: parsed.platform,
+            username: parsed.username,
+            include_social_graph: true,
+          }),
+        })
+        if (!res.ok) {
+          const err = await res
+            .json()
+            .then((d) => d.detail)
+            .catch(() => res.statusText)
+          throw new Error(err)
+        }
+      } else {
+        const platform = identifier.platform_hint || ''
+        if (platform && platform !== 'none') {
+          // Direct collection from known platform
+          const res = await fetch(`${API}/api/cases/${id}/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              platform,
+              username: identifier.value,
+              include_social_graph: true,
+            }),
+          })
+          if (!res.ok) {
+            const err = await res
+              .json()
+              .then((d) => d.detail)
+              .catch(() => res.statusText)
+            throw new Error(err)
+          }
+        } else {
+          // No platform specified — run username search (Maigret discovery)
+          const res = await fetch(
+            `${API}/api/cases/${id}/osint/username-search`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ username: identifier.value }),
+            }
+          )
+          if (!res.ok) {
+            const err = await res
+              .json()
+              .then((d) => d.detail)
+              .catch(() => res.statusText)
+            throw new Error(err)
+          }
+        }
       }
       fetchCase()
     } catch (e) {
@@ -648,6 +717,12 @@ function CaseDetail() {
       title: 'Intelligence',
       description: 'Briefing and cited claims',
       icon: Bot,
+    },
+    {
+      key: 'reports',
+      title: 'Reports',
+      description: 'Investigation report snapshots',
+      icon: FileText,
     },
   ]
 
@@ -1081,8 +1156,10 @@ function CaseDetail() {
                                     </TableCell>
                                     <TableCell className='text-right'>
                                       <div className='flex items-center justify-end gap-1'>
-                                        {ident.identifier_type ===
-                                          'username' && (
+                                        {(ident.identifier_type ===
+                                          'username' ||
+                                          ident.identifier_type ===
+                                            'profile_url') && (
                                           <Button
                                             variant='outline'
                                             size='sm'
@@ -1466,6 +1543,17 @@ function CaseDetail() {
                   insights={insights}
                   onGenerated={() => fetchCase()}
                 />
+              </section>
+            )}
+
+            {activeCaseSection === 'reports' && (
+              <section id='reports' className='space-y-4'>
+                <SectionHeading
+                  icon={FileText}
+                  title='Reports'
+                  description='Versioned SOCMINT investigation report snapshots'
+                />
+                <ReportsPanel caseId={id} />
               </section>
             )}
           </div>

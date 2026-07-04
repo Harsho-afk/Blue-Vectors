@@ -1,3 +1,4 @@
+// ARIA WhatsApp Web lookup sidecar.
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const express = require("express");
 const qrcode = require("qrcode-terminal");
@@ -45,18 +46,15 @@ client.on("disconnected", (reason) => {
 
 client.initialize();
 
-// ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
   res.json({ ready });
 });
 
-// ── Phone lookup ──────────────────────────────────────────────────────────────
 app.get("/lookup/:phone", async (req, res) => {
   if (!ready) {
     return res.status(503).json({ error: "WhatsApp client not ready — scan QR first" });
   }
 
-  // Normalise: strip +, spaces, dashes
   const number = req.params.phone.replace(/[+\s\-()]/g, "");
   const jid = `${number}@c.us`;
 

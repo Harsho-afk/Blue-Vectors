@@ -1,6 +1,7 @@
 {
   "name": "aria-wa-sidecar",
   "version": "1.0.0",
+  "private": true,
   "description": "WhatsApp Web.js sidecar for ARIA phone OSINT",
   "main": "wa_sidecar.js",
   "dependencies": {

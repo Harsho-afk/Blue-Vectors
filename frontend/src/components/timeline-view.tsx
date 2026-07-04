@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Calendar,
@@ -6,13 +6,13 @@ import {
   ChevronRight,
   Clock,
   ExternalLink,
-  Eye,
   GitBranch,
   Globe,
   Info,
   MessageSquare,
   Search,
   Shield,
+  Eye,
   Zap,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -66,18 +66,9 @@ interface TimelineViewProps {
 
 // ── Constants ──
 
-// Distinct colors for different accounts (not platform-based)
 const ACCOUNT_PALETTE = [
-  '#3B82F6', // blue
-  '#F97316', // orange
-  '#10B981', // emerald
-  '#EC4899', // pink
-  '#8B5CF6', // purple
-  '#EAB308', // yellow
-  '#06B6D4', // cyan
-  '#EF4444', // red
-  '#14B8A6', // teal
-  '#A855F7', // violet
+  '#3B82F6', '#F97316', '#10B981', '#EC4899', '#8B5CF6',
+  '#EAB308', '#06B6D4', '#EF4444', '#14B8A6', '#A855F7',
 ]
 
 const SYSTEM_COLOR = '#6B7280'
@@ -120,8 +111,6 @@ function getPostUrl(event: TimelineEvent): string | null {
   if (!event.metadata) return null
   const url = event.metadata.url as string | undefined
   if (url && typeof url === 'string' && url.startsWith('http')) return url
-
-  // Construct URLs from known platforms + metadata
   const platform = event.platform
   if (platform === 'reddit') {
     const sub = event.metadata.subreddit as string | undefined
@@ -159,7 +148,6 @@ export function TimelineView({ caseId, apiBase }: TimelineViewProps) {
       .finally(() => setLoading(false))
   }, [caseId, apiBase])
 
-  // Assign unique colors per account_label
   const accountColorMap = useMemo(() => {
     if (!data) return new Map<string, string>()
     const map = new Map<string, string>()
@@ -280,9 +268,10 @@ export function TimelineView({ caseId, apiBase }: TimelineViewProps) {
         />
       </div>
 
-      {/* ── Activity Chart ── */}
-      <ActivityChart
+      {/* ── Swimlane Timeline ── */}
+      <SwimlanTimeline
         events={filteredEvents}
+        accounts={data.accounts}
         accountColorMap={accountColorMap}
         onDaySelect={(day) => setSelectedDay(day)}
         selectedDay={selectedDay}
@@ -301,30 +290,31 @@ export function TimelineView({ caseId, apiBase }: TimelineViewProps) {
   )
 }
 
-// ── Activity Chart (XY Axis, canvas-rendered, colored by account) ──
+// ── Swimlane Timeline ──
+// Each account gets its own horizontal row. Activity shown as dots sized by event count.
 
-function ActivityChart({
+function SwimlanTimeline({
   events,
+  accounts,
   accountColorMap,
   onDaySelect,
   selectedDay,
 }: {
   events: TimelineEvent[]
+  accounts: TimelineAccount[]
   accountColorMap: Map<string, string>
   onDaySelect: (day: string) => void
   selectedDay: string | null
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [hoveredBar, setHoveredBar] = useState<{
+  const [hoveredDot, setHoveredDot] = useState<{
+    accountLabel: string
     day: string
     count: number
+    types: Record<string, number>
     x: number
     y: number
-    breakdown: Record<string, number>
   } | null>(null)
-  const [canvasWidth, setCanvasWidth] = useState(800)
-  const canvasHeight = 300
 
   const years = useMemo(() => {
     const ys = new Set<number>()
@@ -339,57 +329,38 @@ function ActivityChart({
 
   const [selectedYear, setSelectedYear] = useState(() => years[0] || new Date().getFullYear())
 
-  // Count events per day, per account_label per day, per event_type per day
-  const { dayCounts, accountDayCounts, dayTypeCounts, maxCount, accountLabels } = useMemo(() => {
-    const counts: Record<string, number> = {}
-    const acctCounts: Record<string, Record<string, number>> = {}
-    const typeCounts: Record<string, Record<string, number>> = {}
-    const labels = new Set<string>()
+  // Build per-account, per-day data
+  const { accountLanes, maxDayCount } = useMemo(() => {
+    // Build account labels from accounts prop
+    const acctLabels = accounts.map((a) => `${a.platform}:${a.username}`)
 
-    for (const e of events) {
-      if (!e.timestamp) continue
-      const d = new Date(e.timestamp)
-      if (isNaN(d.getTime()) || d.getFullYear() !== selectedYear) continue
-      const key = dateKey(d)
-      counts[key] = (counts[key] || 0) + 1
-
-      const acctLabel = e.account_label || '_system'
-      labels.add(acctLabel)
-      if (!acctCounts[key]) acctCounts[key] = {}
-      acctCounts[key][acctLabel] = (acctCounts[key][acctLabel] || 0) + 1
-
-      if (!typeCounts[key]) typeCounts[key] = {}
-      typeCounts[key][e.event_type] = (typeCounts[key][e.event_type] || 0) + 1
+    // Count per account per day
+    const laneData: Record<string, Record<string, { count: number; types: Record<string, number> }>> = {}
+    for (const label of acctLabels) {
+      laneData[label] = {}
     }
 
-    let mx = 0
-    for (const v of Object.values(counts)) {
-      if (v > mx) mx = v
+    let maxC = 0
+    for (const e of events) {
+      if (!e.timestamp || !e.account_label) continue
+      const d = new Date(e.timestamp)
+      if (isNaN(d.getTime()) || d.getFullYear() !== selectedYear) continue
+      const dk = dateKey(d)
+      const label = e.account_label
+      if (!laneData[label]) laneData[label] = {}
+      if (!laneData[label][dk]) laneData[label][dk] = { count: 0, types: {} }
+      laneData[label][dk].count++
+      laneData[label][dk].types[e.event_type] = (laneData[label][dk].types[e.event_type] || 0) + 1
+      if (laneData[label][dk].count > maxC) maxC = laneData[label][dk].count
     }
 
     return {
-      dayCounts: counts,
-      accountDayCounts: acctCounts,
-      dayTypeCounts: typeCounts,
-      maxCount: mx,
-      accountLabels: [...labels].sort(),
+      accountLanes: laneData,
+      maxDayCount: maxC || 1,
     }
-  }, [events, selectedYear])
+  }, [events, accounts, selectedYear])
 
-  // Resize
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setCanvasWidth(Math.max(entry.contentRect.width, 400))
-      }
-    })
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
-  // All dates for selected year
+  // Build all days for the year
   const allDays = useMemo(() => {
     const days: string[] = []
     const now = new Date()
@@ -404,246 +375,32 @@ function ActivityChart({
     return days
   }, [selectedYear])
 
-  // Draw chart
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = canvasWidth * dpr
-    canvas.height = canvasHeight * dpr
-    ctx.scale(dpr, dpr)
-    canvas.style.width = `${canvasWidth}px`
-    canvas.style.height = `${canvasHeight}px`
-
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-
-    const padLeft = 50
-    const padRight = 20
-    const padTop = 20
-    const padBottom = 45
-    const chartW = canvasWidth - padLeft - padRight
-    const chartH = canvasHeight - padTop - padBottom
-
-    if (allDays.length === 0 || maxCount === 0) {
-      ctx.fillStyle = '#6B7280'
-      ctx.font = '13px Inter, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('No activity data for this year', canvasWidth / 2, canvasHeight / 2)
-      return
-    }
-
-    // Background subtle gradient
-    const bgGrad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH)
-    bgGrad.addColorStop(0, 'rgba(255,255,255,0.02)')
-    bgGrad.addColorStop(1, 'rgba(255,255,255,0)')
-    ctx.fillStyle = bgGrad
-    ctx.fillRect(padLeft, padTop, chartW, chartH)
-
-    // Y axis gridlines + labels
-    const yTicks = Math.min(maxCount, 5)
-    const yStep = Math.ceil(maxCount / yTicks)
-    ctx.fillStyle = '#9CA3AF'
-    ctx.font = '11px Inter, sans-serif'
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'middle'
-
-    for (let i = 0; i <= yTicks; i++) {
-      const val = i * yStep
-      if (val > maxCount && i > 0) break
-      const y = padTop + chartH - (val / maxCount) * chartH
-      // Gridline
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)'
-      ctx.lineWidth = 0.5
-      ctx.beginPath()
-      ctx.moveTo(padLeft, y)
-      ctx.lineTo(padLeft + chartW, y)
-      ctx.stroke()
-      // Label
-      ctx.fillStyle = '#9CA3AF'
-      ctx.fillText(String(val), padLeft - 8, y)
-    }
-
-    // X axis month labels
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.font = '11px Inter, sans-serif'
+  // Compute month markers
+  const monthMarkers = useMemo(() => {
+    const markers: { month: string; dayIndex: number }[] = []
     let lastMonth = -1
     for (let i = 0; i < allDays.length; i++) {
-      const month = parseInt(allDays[i].split('-')[1], 10) - 1
-      if (month !== lastMonth) {
-        lastMonth = month
-        const x = padLeft + (i / allDays.length) * chartW
-        ctx.fillStyle = '#9CA3AF'
-        ctx.fillText(MONTHS[month], x + 10, padTop + chartH + 10)
-        // Faint month divider
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)'
-        ctx.lineWidth = 0.5
-        ctx.beginPath()
-        ctx.moveTo(x, padTop)
-        ctx.lineTo(x, padTop + chartH)
-        ctx.stroke()
+      const m = parseInt(allDays[i].split('-')[1], 10) - 1
+      if (m !== lastMonth) {
+        lastMonth = m
+        markers.push({ month: MONTHS[m], dayIndex: i })
       }
     }
+    return markers
+  }, [allDays])
 
-    // Draw bars — stacked by account (not platform)
-    const gap = allDays.length > 200 ? 0.3 : allDays.length > 100 ? 0.5 : 1
-    const barWidth = Math.max(1.5, (chartW / allDays.length) - gap)
-
-    for (let i = 0; i < allDays.length; i++) {
-      const day = allDays[i]
-      const count = dayCounts[day] || 0
-      if (count === 0) continue
-
-      const x = padLeft + (i / allDays.length) * chartW
-      const totalBarH = (count / maxCount) * chartH
-      const isSelected = selectedDay === day
-
-      // Stacked segments by account
-      const acctCounts = accountDayCounts[day] || {}
-      let stackY = 0
-      for (const acctLabel of accountLabels) {
-        const ac = acctCounts[acctLabel] || 0
-        if (ac === 0) continue
-        const segH = (ac / maxCount) * chartH
-        const color = accountColorMap.get(acctLabel) || SYSTEM_COLOR
-
-        ctx.globalAlpha = isSelected ? 1 : 0.8
-        ctx.fillStyle = color
-
-        // Rounded top for the topmost segment
-        const yPos = padTop + chartH - stackY - segH
-        if (barWidth >= 3) {
-          const radius = Math.min(2, barWidth / 2)
-          ctx.beginPath()
-          ctx.moveTo(x, yPos + segH)
-          ctx.lineTo(x, yPos + radius)
-          ctx.arcTo(x, yPos, x + radius, yPos, stackY === 0 ? 0 : radius)
-          ctx.lineTo(x + barWidth - radius, yPos)
-          ctx.arcTo(x + barWidth, yPos, x + barWidth, yPos + radius, stackY === 0 ? 0 : radius)
-          ctx.lineTo(x + barWidth, yPos + segH)
-          ctx.closePath()
-          ctx.fill()
-        } else {
-          ctx.fillRect(x, yPos, barWidth, segH)
-        }
-        stackY += segH
-      }
-      ctx.globalAlpha = 1
-
-      // Selected highlight glow
-      if (isSelected) {
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = 1.5
-        ctx.strokeRect(x - 1, padTop + chartH - totalBarH - 1, barWidth + 2, totalBarH + 2)
-        // Glow
-        ctx.shadowColor = '#3B82F6'
-        ctx.shadowBlur = 6
-        ctx.strokeRect(x - 1, padTop + chartH - totalBarH - 1, barWidth + 2, totalBarH + 2)
-        ctx.shadowBlur = 0
-      }
-    }
-
-    // Axes
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)'
-    ctx.lineWidth = 1
-    // Y axis
-    ctx.beginPath()
-    ctx.moveTo(padLeft, padTop)
-    ctx.lineTo(padLeft, padTop + chartH)
-    ctx.stroke()
-    // X axis
-    ctx.beginPath()
-    ctx.moveTo(padLeft, padTop + chartH)
-    ctx.lineTo(padLeft + chartW, padTop + chartH)
-    ctx.stroke()
-
-    // Y axis title
-    ctx.save()
-    ctx.fillStyle = '#9CA3AF'
-    ctx.font = '11px Inter, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.translate(14, padTop + chartH / 2)
-    ctx.rotate(-Math.PI / 2)
-    ctx.fillText('Events', 0, 0)
-    ctx.restore()
-  }, [canvasWidth, allDays, dayCounts, accountDayCounts, accountLabels, accountColorMap, maxCount, selectedDay])
-
-  useEffect(() => { draw() }, [draw])
-
-  // Mouse interaction
-  const handleCanvasMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current
-      if (!canvas || allDays.length === 0) return
-      const rect = canvas.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-
-      const padLeft = 50
-      const padRight = 20
-      const padTop = 20
-      const chartW = canvasWidth - padLeft - padRight
-      const chartH = canvasHeight - padTop - 45
-
-      if (mx < padLeft || mx > padLeft + chartW) {
-        setHoveredBar(null)
-        return
-      }
-
-      const dayIdx = Math.floor(((mx - padLeft) / chartW) * allDays.length)
-      if (dayIdx < 0 || dayIdx >= allDays.length) {
-        setHoveredBar(null)
-        return
-      }
-
-      const day = allDays[dayIdx]
-      const count = dayCounts[day] || 0
-      if (count === 0) {
-        setHoveredBar(null)
-        return
-      }
-
-      const barX = padLeft + (dayIdx / allDays.length) * chartW
-      const barH = (count / maxCount) * chartH
-      setHoveredBar({
-        day,
-        count,
-        x: barX,
-        y: padTop + chartH - barH - 10,
-        breakdown: dayTypeCounts[day] || {},
-      })
-    },
-    [allDays, dayCounts, dayTypeCounts, maxCount, canvasWidth]
+  const accountLabels = Object.keys(accountLanes)
+  const totalYearEvents = Object.values(accountLanes).reduce(
+    (sum, lane) => sum + Object.values(lane).reduce((s, d) => s + d.count, 0), 0
   )
+  const activeDays = new Set(
+    Object.values(accountLanes).flatMap((lane) => Object.keys(lane))
+  ).size
 
-  const handleCanvasClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current
-      if (!canvas || allDays.length === 0) return
-      const rect = canvas.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-
-      const padLeft = 50
-      const padRight = 20
-      const chartW = canvasWidth - padLeft - padRight
-
-      if (mx < padLeft || mx > padLeft + chartW) return
-
-      const dayIdx = Math.floor(((mx - padLeft) / chartW) * allDays.length)
-      if (dayIdx < 0 || dayIdx >= allDays.length) return
-
-      const day = allDays[dayIdx]
-      if (dayCounts[day]) {
-        onDaySelect(day)
-      }
-    },
-    [allDays, dayCounts, canvasWidth, onDaySelect]
-  )
-
-  const totalYearEvents = Object.values(dayCounts).reduce((s, c) => s + c, 0)
-  const activeDays = Object.values(dayCounts).filter((c) => c > 0).length
+  const LANE_HEIGHT = 44
+  const DOT_MAX_R = 8
+  const DOT_MIN_R = 3
+  const LABEL_WIDTH = 140
 
   return (
     <Card>
@@ -676,31 +433,133 @@ function ActivityChart({
         </div>
       </CardHeader>
       <CardContent>
-        <div ref={containerRef} className='relative'>
-          <canvas
-            ref={canvasRef}
-            className='w-full cursor-pointer'
-            style={{ height: canvasHeight }}
-            onMouseMove={handleCanvasMove}
-            onMouseLeave={() => setHoveredBar(null)}
-            onClick={handleCanvasClick}
-          />
+        <div ref={containerRef} className='relative overflow-x-auto'>
+          {/* Month headers */}
+          <div className='flex' style={{ paddingLeft: LABEL_WIDTH }}>
+            {monthMarkers.map((m, i) => {
+              const nextIdx = i < monthMarkers.length - 1 ? monthMarkers[i + 1].dayIndex : allDays.length
+              const span = nextIdx - m.dayIndex
+              return (
+                <div
+                  key={m.month}
+                  className='shrink-0 border-l border-border/20 px-1 text-[11px] font-medium text-muted-foreground'
+                  style={{ width: span * 4 }}
+                >
+                  {m.month}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Swimlanes */}
+          <div className='mt-1'>
+            {accountLabels.map((label) => {
+              const color = accountColorMap.get(label) || SYSTEM_COLOR
+              const parts = label.split(':')
+              const username = parts[1] || label
+              const platform = parts[0] || ''
+              const lane = accountLanes[label]
+
+              return (
+                <div
+                  key={label}
+                  className='flex items-center border-b border-border/10'
+                  style={{ height: LANE_HEIGHT }}
+                >
+                  {/* Account label */}
+                  <div
+                    className='flex shrink-0 items-center gap-2 pr-3'
+                    style={{ width: LABEL_WIDTH }}
+                  >
+                    <span
+                      className='h-3 w-3 shrink-0 rounded-full'
+                      style={{ backgroundColor: color }}
+                    />
+                    <div className='min-w-0'>
+                      <p className='truncate text-xs font-medium' style={{ color }}>
+                        {username}
+                      </p>
+                      <p className='truncate text-[9px] text-muted-foreground'>{platform}</p>
+                    </div>
+                  </div>
+
+                  {/* Dots strip */}
+                  <div className='relative flex flex-1 items-center'>
+                    <svg
+                      width={allDays.length * 4}
+                      height={LANE_HEIGHT}
+                      className='block'
+                    >
+                      {/* Month dividers */}
+                      {monthMarkers.map((m) => (
+                        <line
+                          key={m.month}
+                          x1={m.dayIndex * 4}
+                          y1={0}
+                          x2={m.dayIndex * 4}
+                          y2={LANE_HEIGHT}
+                          stroke='currentColor'
+                          className='text-border/10'
+                          strokeWidth={0.5}
+                        />
+                      ))}
+                      {/* Activity dots */}
+                      {allDays.map((day, i) => {
+                        const data = lane[day]
+                        if (!data) return null
+                        const r = DOT_MIN_R + ((data.count - 1) / (maxDayCount - 1 || 1)) * (DOT_MAX_R - DOT_MIN_R)
+                        const isSelected = selectedDay === day
+                        return (
+                          <circle
+                            key={day}
+                            cx={i * 4 + 2}
+                            cy={LANE_HEIGHT / 2}
+                            r={Math.min(r, LANE_HEIGHT / 2 - 2)}
+                            fill={color}
+                            opacity={isSelected ? 1 : 0.75}
+                            stroke={isSelected ? '#fff' : 'none'}
+                            strokeWidth={isSelected ? 1.5 : 0}
+                            className='cursor-pointer transition-opacity hover:opacity-100'
+                            onMouseEnter={(e) => {
+                              const rect = (e.target as SVGElement).getBoundingClientRect()
+                              const containerRect = containerRef.current?.getBoundingClientRect()
+                              setHoveredDot({
+                                accountLabel: label,
+                                day,
+                                count: data.count,
+                                types: data.types,
+                                x: rect.left - (containerRect?.left || 0) + rect.width / 2,
+                                y: rect.top - (containerRect?.top || 0) - 8,
+                              })
+                            }}
+                            onMouseLeave={() => setHoveredDot(null)}
+                            onClick={() => onDaySelect(day)}
+                          />
+                        )
+                      })}
+                    </svg>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
           {/* Tooltip */}
-          {hoveredBar && (
+          {hoveredDot && (
             <div
-              className='pointer-events-none absolute z-20 min-w-[140px] rounded-lg border border-border bg-popover/95 px-3 py-2 text-xs shadow-xl backdrop-blur-sm'
-              style={{
-                left: Math.min(hoveredBar.x, canvasWidth - 170),
-                top: Math.max(hoveredBar.y - 10, 0),
-              }}
+              className='pointer-events-none absolute z-20 min-w-[160px] -translate-x-1/2 -translate-y-full rounded-lg border border-border bg-popover/95 px-3 py-2 text-xs shadow-xl backdrop-blur-sm'
+              style={{ left: hoveredDot.x, top: hoveredDot.y }}
             >
-              <p className='font-semibold'>{formatDate(hoveredBar.day + 'T00:00:00Z')}</p>
-              <p className='mt-0.5 text-muted-foreground'>
-                {hoveredBar.count} event{hoveredBar.count !== 1 ? 's' : ''}
+              <p className='font-semibold'>{formatDate(hoveredDot.day + 'T00:00:00Z')}</p>
+              <p className='text-muted-foreground' style={{ color: accountColorMap.get(hoveredDot.accountLabel) }}>
+                {hoveredDot.accountLabel.split(':')[1]}
               </p>
-              {Object.keys(hoveredBar.breakdown).length > 0 && (
-                <div className='mt-1.5 border-t border-border/50 pt-1.5 space-y-0.5'>
-                  {Object.entries(hoveredBar.breakdown)
+              <p className='mt-0.5 font-medium'>
+                {hoveredDot.count} event{hoveredDot.count !== 1 ? 's' : ''}
+              </p>
+              {Object.keys(hoveredDot.types).length > 0 && (
+                <div className='mt-1 space-y-0.5 border-t border-border/50 pt-1'>
+                  {Object.entries(hoveredDot.types)
                     .sort(([, a], [, b]) => b - a)
                     .map(([type, count]) => (
                       <div key={type} className='flex justify-between gap-3'>
@@ -710,30 +569,26 @@ function ActivityChart({
                     ))}
                 </div>
               )}
-              <p className='mt-1.5 text-[9px] text-muted-foreground/60'>Click to expand</p>
+              <p className='mt-1 text-[9px] text-muted-foreground/60'>Click to expand</p>
             </div>
           )}
         </div>
-        {/* Legend — per account */}
-        <div className='mt-3 flex flex-wrap items-center gap-3 text-[11px]'>
-          {accountLabels.map((label) => {
-            const color = accountColorMap.get(label) || SYSTEM_COLOR
-            const parts = label.split(':')
-            const displayName = label === '_system' ? 'ARIA System' : parts[1] || label
-            const platform = label === '_system' ? '' : parts[0]
-            return (
-              <span key={label} className='flex items-center gap-1.5'>
-                <span
-                  className='inline-block h-3 w-3 rounded-sm'
-                  style={{ backgroundColor: color }}
-                />
-                <span className='font-medium'>{displayName}</span>
-                {platform && (
-                  <span className='text-[9px] text-muted-foreground'>({platform})</span>
-                )}
-              </span>
-            )
-          })}
+
+        {/* Size legend */}
+        <div className='mt-3 flex items-center gap-4 text-[11px] text-muted-foreground'>
+          <span className='font-medium'>Activity:</span>
+          <span className='flex items-center gap-1'>
+            <svg width={10} height={10}><circle cx={5} cy={5} r={DOT_MIN_R} fill='#6B7280' /></svg>
+            1 event
+          </span>
+          <span className='flex items-center gap-1'>
+            <svg width={18} height={18}><circle cx={9} cy={9} r={(DOT_MIN_R + DOT_MAX_R) / 2} fill='#6B7280' /></svg>
+            moderate
+          </span>
+          <span className='flex items-center gap-1'>
+            <svg width={20} height={20}><circle cx={10} cy={10} r={DOT_MAX_R} fill='#6B7280' /></svg>
+            peak
+          </span>
         </div>
       </CardContent>
     </Card>
@@ -753,7 +608,6 @@ function DayDetail({
   accountColorMap: Map<string, string>
   onClose: () => void
 }) {
-  // Group by event type
   const grouped = useMemo(() => {
     const groups: Record<string, TimelineEvent[]> = {}
     for (const e of events) {
@@ -802,7 +656,6 @@ function DayDetail({
         </div>
       </CardHeader>
       <CardContent>
-        {/* Summary pills */}
         <div className='mb-4 flex flex-wrap gap-2'>
           {sortedTypes.map((type) => {
             const Icon = EVENT_ICONS[type] || Info
@@ -815,7 +668,6 @@ function DayDetail({
           })}
         </div>
 
-        {/* Events grouped by type */}
         <div className='space-y-5'>
           {sortedTypes.map((type) => {
             const Icon = EVENT_ICONS[type] || Info
@@ -837,18 +689,13 @@ function DayDetail({
                         key={event.id}
                         className='group flex items-start gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-muted/40'
                       >
-                        {/* Time */}
                         <span className='w-12 shrink-0 pt-0.5 text-[11px] font-mono text-muted-foreground'>
                           {event.timestamp ? formatTime(event.timestamp) : '—'}
                         </span>
-
-                        {/* Colored accent bar */}
                         <div
                           className='mt-1 h-8 w-1 shrink-0 rounded-full'
                           style={{ backgroundColor: acctColor }}
                         />
-
-                        {/* Content */}
                         <div className='min-w-0 flex-1'>
                           <div className='flex items-center gap-2'>
                             <span className='text-sm font-medium'>{event.title}</span>
@@ -863,7 +710,6 @@ function DayDetail({
                               {event.description}
                             </p>
                           )}
-                          {/* Metadata tags */}
                           {event.metadata && (
                             <div className='mt-1 flex flex-wrap gap-1'>
                               {Object.entries(event.metadata).map(([k, v]) => {
@@ -879,8 +725,6 @@ function DayDetail({
                             </div>
                           )}
                         </div>
-
-                        {/* Account badge */}
                         {event.account_label && (
                           <Badge
                             variant='outline'
@@ -890,8 +734,6 @@ function DayDetail({
                             {event.account_label.split(':')[1] || event.account_label}
                           </Badge>
                         )}
-
-                        {/* Link to post */}
                         {postUrl && (
                           <a
                             href={postUrl}

@@ -4,12 +4,14 @@ import ForceGraph2D, {
   type NodeObject,
   type LinkObject,
 } from 'react-force-graph-2d'
+import { forceCollide } from 'd3-force-3d'
 import {
   AlertTriangle,
   Eye,
   EyeOff,
   Info,
   Maximize2,
+  Minimize2,
   X,
   ZoomIn,
   ZoomOut,
@@ -106,8 +108,6 @@ const EDGE_CLASS_COLORS: Record<string, string> = {
   discovery: '#6B7280',
 }
 
-// ── Edge dash patterns ──
-
 const EDGE_DASH: Record<string, number[] | undefined> = {
   hard_link: undefined,
   deterministic: undefined,
@@ -116,6 +116,27 @@ const EDGE_DASH: Record<string, number[] | undefined> = {
   behavioral: [8, 4],
   discovery: [3, 6],
 }
+
+const EDGE_CLASS_LABELS: Record<string, string> = {
+  hard_link: 'Hard Links',
+  deterministic: 'Hard Links',
+  probabilistic: 'Correlations',
+  network: 'Network',
+  behavioral: 'Behavioral',
+  discovery: 'Discoveries',
+}
+
+const EVIDENCE_PRIORITY: Record<string, number> = {
+  hard_link: 6,
+  deterministic: 5,
+  probabilistic: 4,
+  behavioral: 3,
+  network: 2,
+  discovery: 1,
+}
+
+const DEFAULT_HEIGHT = 700
+const FULLSCREEN_OFFSET = 120
 
 // ── Component ──
 
@@ -127,13 +148,20 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
   const [error, setError] = useState<string | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 500 })
+  const [dimensions, setDimensions] = useState({ width: 800, height: DEFAULT_HEIGHT })
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [showDiscoveries, setShowDiscoveries] = useState(true)
+  const [visibleEdgeClasses, setVisibleEdgeClasses] = useState<Set<string>>(
+    new Set(['hard_link', 'deterministic', 'probabilistic', 'network', 'behavioral', 'discovery'])
+  )
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set())
   const [highlightEdges, setHighlightEdges] = useState<Set<string>>(new Set())
   const [hoverNode, setHoverNode] = useState<string | null>(null)
+  const didFitRef = useRef(false)
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Fetch graph data
+  const graphHeight = isFullscreen ? window.innerHeight - FULLSCREEN_OFFSET : DEFAULT_HEIGHT
+
   useEffect(() => {
     setLoading(true)
     fetch(`${apiBase}/api/cases/${caseId}/graph`, { credentials: 'include' })
@@ -149,24 +177,47 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       .finally(() => setLoading(false))
   }, [caseId, apiBase])
 
-  // Configure force simulation after data loads
+  // Configure force simulation — scales with node count
   useEffect(() => {
     if (!graphRef.current || !graphData) return
     const fg = graphRef.current
-    // Repulsion: nodes push apart
+    const nodeCount = graphData.nodes.length
+
+    // Strong repulsion — scales aggressively with node count to prevent clumping
+    const baseCharge = -400
+    const perNodeCharge = -30
     fg.d3Force('charge')?.strength((node: any) => {
       const n = node as GraphNode
-      return n.type === 'seed' ? -300 : n.type === 'discovery' ? -50 : -150
+      const multiplier = n.type === 'seed' ? 2 : n.type === 'discovery' ? 0.5 : 1
+      return (baseCharge + nodeCount * perNodeCharge) * multiplier
     })
-    // Link distance: strong links pull tight, weak float further
+
+    // Link distance: hard links short, weak links long, scales with graph size
     fg.d3Force('link')?.distance((link: any) => {
       const confidence = link.confidence || 0.3
-      return 50 + (1 - confidence) * 120
+      const base = 80 + nodeCount * 4
+      return base + (1 - confidence) * 120
     })
-    // Collision: prevent overlap
-    fg.d3Force('collide', null)
-    // Center force
-    fg.d3Force('center')?.strength(0.05)
+
+    // Collision detection — radius includes label space below node
+    fg.d3Force('collide', forceCollide((node: any) => {
+      return (node as GraphNode).size + 28
+    }).strength(0.9).iterations(3))
+
+    // Weaker centering so graph can spread
+    fg.d3Force('center')?.strength(0.03)
+
+    fg.d3ReheatSimulation()
+  }, [graphData])
+
+  // Auto-fit after initial layout stabilizes
+  useEffect(() => {
+    if (!graphData || didFitRef.current) return
+    const timer = setTimeout(() => {
+      graphRef.current?.zoomToFit(400, 60)
+      didFitRef.current = true
+    }, 1500)
+    return () => clearTimeout(timer)
   }, [graphData])
 
   // Resize observer
@@ -177,7 +228,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       for (const entry of entries) {
         setDimensions({
           width: entry.contentRect.width,
-          height: Math.max(entry.contentRect.height, 500),
+          height: Math.max(entry.contentRect.height, DEFAULT_HEIGHT),
         })
       }
     })
@@ -185,7 +236,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
     return () => observer.disconnect()
   }, [])
 
-  // Filter nodes based on toggle + compute parallel edge offsets
+  // Filter nodes & edges, consolidate parallel edges between same node pair
   const filteredData = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] }
 
@@ -195,44 +246,60 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
 
     const visibleIds = new Set(visibleNodes.map((n) => n.id))
 
-    const links = graphData.edges
-      .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
-      .map((e) => ({
-        ...e,
-        source: e.source,
-        target: e.target,
-      }))
+    const rawLinks = graphData.edges.filter((e) => {
+      if (!visibleIds.has(e.source) || !visibleIds.has(e.target)) return false
+      return visibleEdgeClasses.has(e.evidence_class)
+    })
 
-    // Compute parallel edge indices for same node pair
-    const pairCount: Record<string, number> = {}
-    const pairIndex: number[] = []
-    for (const link of links) {
-      const s = typeof link.source === 'object' ? (link.source as any).id : link.source
-      const t = typeof link.target === 'object' ? (link.target as any).id : link.target
-      const key = [s, t].sort().join('|')
-      const idx = pairCount[key] || 0
-      pairCount[key] = idx + 1
-      pairIndex.push(idx)
+    const pairMap = new Map<string, GraphEdge[]>()
+    for (const edge of rawLinks) {
+      const key = [edge.source, edge.target].sort().join('|')
+      if (!pairMap.has(key)) pairMap.set(key, [])
+      pairMap.get(key)!.push(edge)
     }
-    // Attach _parallelIndex and _parallelTotal to each link
-    for (let i = 0; i < links.length; i++) {
-      const s = typeof links[i].source === 'object' ? (links[i].source as any).id : links[i].source
-      const t = typeof links[i].target === 'object' ? (links[i].target as any).id : links[i].target
-      const key = [s, t].sort().join('|')
-      ;(links[i] as any)._parallelIndex = pairIndex[i]
-      ;(links[i] as any)._parallelTotal = pairCount[key]
-    }
+
+    const links = [...pairMap.values()].map((group) => {
+      const sorted = [...group].sort(
+        (a, b) => (EVIDENCE_PRIORITY[b.evidence_class] || 0) - (EVIDENCE_PRIORITY[a.evidence_class] || 0)
+      )
+      const best = sorted[0]
+      return {
+        ...best,
+        source: best.source,
+        target: best.target,
+        confidence: Math.max(...group.map((e) => e.confidence)),
+        _subEdges: group,
+      }
+    })
 
     return { nodes: [...visibleNodes], links }
-  }, [graphData, showDiscoveries])
+  }, [graphData, showDiscoveries, visibleEdgeClasses])
 
-  // Node interactions
+  // Node interactions — delayed clear so cursor can reach the dossier panel
+  const clearHoverState = useCallback(() => {
+    setHighlightNodes(new Set())
+    setHighlightEdges(new Set())
+    setHoverNode(null)
+  }, [])
+
+  const cancelHoverTimeout = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+  }, [])
+
+  const startHoverTimeout = useCallback(() => {
+    cancelHoverTimeout()
+    hoverTimeoutRef.current = setTimeout(clearHoverState, 300)
+  }, [cancelHoverTimeout, clearHoverState])
+
   const handleNodeHover = useCallback(
     (node: NodeObject<GraphNode> | null) => {
+      cancelHoverTimeout()
+
       if (!node) {
-        setHighlightNodes(new Set())
-        setHighlightEdges(new Set())
-        setHoverNode(null)
+        startHoverTimeout()
         return
       }
       const nid = node.id as string
@@ -252,14 +319,13 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       setHighlightNodes(connectedNodes)
       setHighlightEdges(connectedEdges)
     },
-    [filteredData.links]
+    [filteredData.links, cancelHoverTimeout, startHoverTimeout]
   )
 
   const handleNodeClick = useCallback(
     (node: NodeObject<GraphNode>) => {
       setSelectedEdge(null)
       setSelectedNode(node as unknown as GraphNode)
-      // Center on node
       graphRef.current?.centerAt(node.x, node.y, 500)
       graphRef.current?.zoom(2, 500)
     },
@@ -274,47 +340,126 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
     []
   )
 
-  // Custom node rendering
+  const toggleEdgeClass = (cls: string) => {
+    setVisibleEdgeClasses((prev) => {
+      const next = new Set(prev)
+      if (next.has(cls)) next.delete(cls)
+      else next.add(cls)
+      return next
+    })
+  }
+
+  // Dossier data — deduplicated, with clean separation of edge types
+  const dossierData = useMemo(() => {
+    if (!hoverNode || !graphData) return null
+    const node = graphData.nodes.find((n) => n.id === hoverNode)
+    if (!node) return null
+
+    const connections: Array<{
+      otherId: string
+      otherLabel: string
+      otherPlatform: string | null
+      otherType: string
+      edges: GraphEdge[]
+    }> = []
+
+    const seen = new Map<string, number>()
+    for (const edge of graphData.edges) {
+      const src = typeof edge.source === 'object' ? (edge.source as any).id : edge.source
+      const tgt = typeof edge.target === 'object' ? (edge.target as any).id : edge.target
+      if (src !== hoverNode && tgt !== hoverNode) continue
+
+      const otherId = src === hoverNode ? tgt : src
+      const idx = seen.get(otherId)
+      if (idx != null) {
+        connections[idx].edges.push(edge)
+      } else {
+        const otherNode = graphData.nodes.find((n) => n.id === otherId)
+        seen.set(otherId, connections.length)
+        connections.push({
+          otherId,
+          otherLabel: otherNode?.label || otherId,
+          otherPlatform: otherNode?.platform || null,
+          otherType: otherNode?.type || 'account',
+          edges: [edge],
+        })
+      }
+    }
+
+    // Deduplicate edges per connection: same type+label = keep one
+    for (const conn of connections) {
+      const dedupMap = new Map<string, GraphEdge>()
+      for (const edge of conn.edges) {
+        const key = `${edge.type}|${edge.label}`
+        if (!dedupMap.has(key)) dedupMap.set(key, edge)
+      }
+      conn.edges = [...dedupMap.values()]
+    }
+
+    connections.sort((a, b) => {
+      const maxA = Math.max(...a.edges.map((e) => e.confidence))
+      const maxB = Math.max(...b.edges.map((e) => e.confidence))
+      return maxB - maxA
+    })
+
+    return { node, connections }
+  }, [hoverNode, graphData])
+
+  // Custom node rendering — always-visible, readable labels, strong dim on non-connected
   const drawNode = useCallback(
     (node: NodeObject<GraphNode>, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const n = node as unknown as GraphNode & { x: number; y: number }
       const size = n.size || 8
-      const isHighlighted = highlightNodes.size === 0 || highlightNodes.has(n.id)
-      const opacity = isHighlighted ? 1 : 0.2
+      const hovering = highlightNodes.size > 0
+      const isHighlighted = !hovering || highlightNodes.has(n.id)
+      const isHovered = hoverNode === n.id
+      // When hovering: connected=1.0, non-connected=0.04 (nearly invisible)
+      const opacity = hovering ? (isHighlighted ? 1 : 0.04) : 1
 
       ctx.save()
       ctx.globalAlpha = opacity
 
-      // Draw outer ring for seeds
+      const nodeColor = n.type === 'seed'
+        ? NODE_TYPE_COLORS.seed
+        : n.type === 'discovery'
+          ? NODE_TYPE_COLORS.discovery
+          : PLATFORM_COLORS[n.platform || 'default'] || PLATFORM_COLORS.default
+
+      // Hover glow ring
+      if (isHovered) {
+        ctx.beginPath()
+        ctx.arc(n.x, n.y, size + 10, 0, 2 * Math.PI)
+        ctx.fillStyle = nodeColor
+        ctx.globalAlpha = 0.2
+        ctx.fill()
+        ctx.globalAlpha = opacity
+      }
+
+      // Outer ring for seeds
       if (n.type === 'seed') {
         ctx.beginPath()
-        ctx.arc(n.x, n.y, size + 3, 0, 2 * Math.PI)
+        ctx.arc(n.x, n.y, size + 4, 0, 2 * Math.PI)
         ctx.strokeStyle = NODE_TYPE_COLORS.seed
-        ctx.lineWidth = 2
+        ctx.lineWidth = 2.5
         ctx.stroke()
       }
 
-      // Draw node circle
+      // Node circle
       ctx.beginPath()
       ctx.arc(n.x, n.y, size, 0, 2 * Math.PI)
-
-      if (n.type === 'seed') {
-        ctx.fillStyle = NODE_TYPE_COLORS.seed
-      } else if (n.type === 'discovery') {
-        ctx.fillStyle = NODE_TYPE_COLORS.discovery
+      ctx.fillStyle = nodeColor
+      if (n.type === 'discovery') {
         ctx.setLineDash([2, 2])
         ctx.strokeStyle = '#9CA3AF'
         ctx.lineWidth = 1
         ctx.stroke()
         ctx.setLineDash([])
-      } else {
-        ctx.fillStyle = PLATFORM_COLORS[n.platform || 'default'] || PLATFORM_COLORS.default
       }
       ctx.fill()
 
-      // Draw platform icon letter
-      const fontSize = Math.max(size * 0.8, 4)
-      ctx.font = `bold ${fontSize}px Inter, sans-serif`
+      // Platform icon letter
+      const iconSize = Math.max(size * 0.9, 5)
+      ctx.font = `bold ${iconSize}px Inter, system-ui, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillStyle = '#FFFFFF'
@@ -325,36 +470,46 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
           : '?'
       ctx.fillText(icon, n.x, n.y)
 
-      // Draw label if zoomed in enough
-      if (globalScale > 1.2) {
-        const label = n.label || ''
-        const truncated = label.length > 16 ? label.slice(0, 14) + '…' : label
-        const labelSize = Math.max(3.5, 10 / globalScale)
-        ctx.font = `${labelSize}px Inter, sans-serif`
-        ctx.textAlign = 'center'
-        ctx.fillStyle = isHighlighted ? '#E5E7EB' : '#6B7280'
-        ctx.fillText(truncated, n.x, n.y + size + labelSize + 1)
-      }
+      // Label — always visible, bigger font, dark pill background
+      const label = n.label || ''
+      const maxLen = globalScale > 1.2 ? 28 : 22
+      const truncated = label.length > maxLen ? label.slice(0, maxLen - 1) + '…' : label
+      const labelSize = Math.max(5, Math.min(14, 13 / globalScale))
+      ctx.font = `600 ${labelSize}px Inter, system-ui, sans-serif`
+      const textWidth = ctx.measureText(truncated).width
+      const labelY = n.y + size + labelSize + 4
 
-      // Hover halo
-      if (hoverNode === n.id) {
-        ctx.beginPath()
-        ctx.arc(n.x, n.y, size + 6, 0, 2 * Math.PI)
-        ctx.strokeStyle = PLATFORM_COLORS[n.platform || 'default'] || '#3B82F6'
-        ctx.lineWidth = 1.5
-        ctx.globalAlpha = 0.4
-        ctx.stroke()
-      }
+      // Background rounded-rect pill
+      const pillPadX = 4
+      const pillPadY = 2
+      const pillW = textWidth + pillPadX * 2
+      const pillH = labelSize + pillPadY * 2
+      const pillR = pillH / 2
+      ctx.fillStyle = isHighlighted ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 0, 0, 0.4)'
+      ctx.beginPath()
+      ctx.moveTo(n.x - pillW / 2 + pillR, labelY - pillH / 2)
+      ctx.lineTo(n.x + pillW / 2 - pillR, labelY - pillH / 2)
+      ctx.arc(n.x + pillW / 2 - pillR, labelY, pillR, -Math.PI / 2, Math.PI / 2)
+      ctx.lineTo(n.x - pillW / 2 + pillR, labelY + pillH / 2)
+      ctx.arc(n.x - pillW / 2 + pillR, labelY, pillR, Math.PI / 2, -Math.PI / 2)
+      ctx.closePath()
+      ctx.fill()
+
+      // Label text
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = isHighlighted ? '#FFFFFF' : '#9CA3AF'
+      ctx.fillText(truncated, n.x, labelY)
 
       ctx.restore()
     },
     [highlightNodes, hoverNode]
   )
 
-  // Custom link rendering with parallel edge support
+  // Custom link rendering — clean single line per node pair, no floating labels
   const drawLink = useCallback(
     (link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const edge = link as GraphEdge & { source: { x: number; y: number }; target: { x: number; y: number } }
+      const edge = link as GraphEdge & { source: { x: number; y: number }; target: { x: number; y: number }; _subEdges?: GraphEdge[] }
       if (!edge.source || !edge.target) return
 
       const src = edge.source as any
@@ -362,24 +517,24 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       if (!src.x || !tgt.x) return
 
       const linkIdx = filteredData.links.indexOf(link)
-      const isHighlighted = highlightEdges.size === 0 || highlightEdges.has(`${linkIdx}`)
-      const opacity = isHighlighted ? 0.8 : 0.1
+      const hovering = highlightEdges.size > 0
+      const isHighlighted = !hovering || highlightEdges.has(`${linkIdx}`)
+      const opacity = hovering ? (isHighlighted ? 0.9 : 0.02) : 0.5
 
       const color = EDGE_CLASS_COLORS[edge.evidence_class] || '#6B7280'
       const dash = EDGE_DASH[edge.evidence_class]
-      const width = Math.max(0.5, (edge.confidence || 0.3) * 3)
+      const subCount = edge._subEdges?.length || 1
+      const baseWidth = Math.max(1, (edge.confidence || 0.3) * 4)
+      const width = baseWidth + Math.min(subCount - 1, 3) * 0.5
 
       ctx.save()
       ctx.globalAlpha = opacity
       ctx.strokeStyle = color
-      ctx.lineWidth = width / globalScale
+      ctx.lineWidth = isHighlighted ? width / globalScale : (width * 0.5) / globalScale
 
       if (dash) ctx.setLineDash(dash.map((d) => d / globalScale))
       else ctx.setLineDash([])
 
-      // Parallel edge offset — spread multiple edges between same node pair
-      const parallelIndex = (link as any)._parallelIndex || 0
-      const parallelTotal = (link as any)._parallelTotal || 1
       const midX = (src.x + tgt.x) / 2
       const midY = (src.y + tgt.y) / 2
       const dx = tgt.x - src.x
@@ -387,14 +542,9 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       const dist = Math.sqrt(dx * dx + dy * dy) || 1
       const normX = dy / dist
       const normY = -(dx / dist)
-
-      // Each parallel edge gets a different offset from center
-      const spread = 25
-      const offsetVal = parallelTotal === 1
-        ? spread * 0.3
-        : (parallelIndex - (parallelTotal - 1) / 2) * spread
-      const cpX = midX + normX * offsetVal
-      const cpY = midY + normY * offsetVal
+      const curveOffset = 12
+      const cpX = midX + normX * curveOffset
+      const cpY = midY + normY * curveOffset
 
       ctx.beginPath()
       ctx.moveTo(src.x, src.y)
@@ -402,16 +552,24 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Label — always show at moderate zoom, positioned along the curve
-      if (globalScale > 0.8) {
-        const labelX = (src.x + 2 * cpX + tgt.x) / 4
-        const labelY = (src.y + 2 * cpY + tgt.y) / 4
-        const labelSize = Math.max(3, 8 / globalScale)
-        ctx.font = `${labelSize}px Inter, sans-serif`
-        ctx.textAlign = 'center'
+      // Small count badge on hover for consolidated edges
+      if (isHighlighted && hovering && subCount > 1) {
+        const badgeX = (src.x + 2 * cpX + tgt.x) / 4
+        const badgeY = (src.y + 2 * cpY + tgt.y) / 4
+        const badgeR = 8 / globalScale
+        ctx.globalAlpha = 0.9
+        ctx.fillStyle = '#1a1a2e'
+        ctx.beginPath()
+        ctx.arc(badgeX, badgeY, badgeR, 0, 2 * Math.PI)
+        ctx.fill()
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1 / globalScale
+        ctx.stroke()
         ctx.fillStyle = color
-        ctx.globalAlpha = isHighlighted ? 0.9 : 0.15
-        ctx.fillText(edge.label || '', labelX, labelY - 2 / globalScale)
+        ctx.font = `bold ${Math.max(4, 9 / globalScale)}px Inter, system-ui, sans-serif`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(`${subCount}`, badgeX, badgeY)
       }
 
       ctx.restore()
@@ -419,10 +577,10 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
     [highlightEdges, filteredData.links]
   )
 
-  // Zoom controls
+  // Controls
   const handleZoomIn = () => graphRef.current?.zoom(graphRef.current.zoom() * 1.5, 300)
   const handleZoomOut = () => graphRef.current?.zoom(graphRef.current.zoom() / 1.5, 300)
-  const handleFit = () => graphRef.current?.zoomToFit(400, 40)
+  const handleFit = () => graphRef.current?.zoomToFit(400, 60)
 
   if (loading) {
     return (
@@ -462,6 +620,9 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       </Card>
     )
   }
+
+  // Collect distinct edge classes present in data for filter buttons
+  const edgeClassesPresent = [...new Set(graphData.edges.map((e) => e.evidence_class))]
 
   return (
     <div className='flex flex-col gap-4'>
@@ -504,22 +665,31 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       </div>
 
       {/* ── Graph Canvas ── */}
-      <Card className='relative overflow-hidden'>
-        {/* Controls */}
+      <Card className={cn('relative overflow-hidden', isFullscreen && 'fixed inset-0 z-50 rounded-none border-0')}>
+        {/* Zoom controls — top left */}
         <div className='absolute left-3 top-3 z-10 flex flex-col gap-1'>
-          <Button size='icon' variant='secondary' className='h-7 w-7' onClick={handleZoomIn}>
-            <ZoomIn className='h-3.5 w-3.5' />
+          <Button size='icon' variant='secondary' className='h-8 w-8' onClick={handleZoomIn} title='Zoom in'>
+            <ZoomIn className='h-4 w-4' />
           </Button>
-          <Button size='icon' variant='secondary' className='h-7 w-7' onClick={handleZoomOut}>
-            <ZoomOut className='h-3.5 w-3.5' />
+          <Button size='icon' variant='secondary' className='h-8 w-8' onClick={handleZoomOut} title='Zoom out'>
+            <ZoomOut className='h-4 w-4' />
           </Button>
-          <Button size='icon' variant='secondary' className='h-7 w-7' onClick={handleFit}>
-            <Maximize2 className='h-3.5 w-3.5' />
+          <Button size='icon' variant='secondary' className='h-8 w-8' onClick={handleFit} title='Fit to view'>
+            <Maximize2 className='h-4 w-4' />
+          </Button>
+          <Button
+            size='icon'
+            variant='secondary'
+            className='h-8 w-8'
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize2 className='h-4 w-4' /> : <Maximize2 className='h-4 w-4' />}
           </Button>
         </div>
 
-        {/* Filter toggle */}
-        <div className='absolute right-3 top-3 z-10 flex gap-1'>
+        {/* Filter toggles — top right */}
+        <div className='absolute right-3 top-3 z-10 flex flex-wrap gap-1'>
           <Button
             size='sm'
             variant={showDiscoveries ? 'secondary' : 'ghost'}
@@ -529,35 +699,231 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
             {showDiscoveries ? <Eye className='h-3 w-3' /> : <EyeOff className='h-3 w-3' />}
             Discoveries
           </Button>
+          {edgeClassesPresent.map((cls) => {
+            const active = visibleEdgeClasses.has(cls)
+            const color = EDGE_CLASS_COLORS[cls] || '#6B7280'
+            return (
+              <Button
+                key={cls}
+                size='sm'
+                variant={active ? 'secondary' : 'ghost'}
+                className='h-7 gap-1 text-xs'
+                onClick={() => toggleEdgeClass(cls)}
+              >
+                <span className='h-2 w-2 rounded-full' style={{ backgroundColor: active ? color : '#6B7280' }} />
+                {EDGE_CLASS_LABELS[cls] || cls}
+              </Button>
+            )
+          })}
         </div>
 
-        {/* Legend */}
-        <div className='absolute bottom-3 left-3 z-10 rounded-md bg-background/80 p-2 text-[10px] backdrop-blur-sm'>
-          <div className='flex flex-col gap-1'>
-            <div className='flex items-center gap-1.5'>
-              <span className='inline-block h-2 w-4 rounded-sm bg-green-500' />
+        {/* Legend — bottom left */}
+        <div className='absolute bottom-3 left-3 z-10 rounded-lg bg-background/90 p-2.5 text-xs shadow-lg backdrop-blur-sm'>
+          <div className='flex flex-col gap-1.5'>
+            <div className='flex items-center gap-2'>
+              <span className='inline-block h-2.5 w-5 rounded-sm bg-green-500' />
               <span>Hard link</span>
             </div>
-            <div className='flex items-center gap-1.5'>
-              <span className='inline-block h-2 w-4 rounded-sm bg-yellow-500' style={{ opacity: 0.7 }} />
+            <div className='flex items-center gap-2'>
+              <span className='inline-block h-2.5 w-5 rounded-sm bg-yellow-500' style={{ opacity: 0.7 }} />
               <span>Correlation</span>
             </div>
-            <div className='flex items-center gap-1.5'>
-              <span className='inline-block h-2 w-4 rounded-sm bg-purple-500' style={{ opacity: 0.7 }} />
+            <div className='flex items-center gap-2'>
+              <span className='inline-block h-2.5 w-5 rounded-sm bg-purple-500' style={{ opacity: 0.7 }} />
               <span>Network</span>
             </div>
-            <div className='flex items-center gap-1.5'>
-              <span className='inline-block h-2 w-4 rounded-sm bg-gray-500' style={{ opacity: 0.5 }} />
-              <span>Discovery (weak)</span>
+            <div className='flex items-center gap-2'>
+              <span className='inline-block h-2.5 w-5 rounded-sm bg-gray-500' style={{ opacity: 0.5 }} />
+              <span>Discovery</span>
+            </div>
+            <hr className='border-border' />
+            <div className='flex items-center gap-2'>
+              <span className='flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold text-white'>◎</span>
+              <span>Seed</span>
+            </div>
+            <div className='flex items-center gap-2'>
+              <span className='flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[8px] font-bold text-white'>A</span>
+              <span>Account</span>
             </div>
           </div>
         </div>
 
-        <div ref={containerRef} className='h-[550px] w-full'>
+        {/* Hint — bottom right */}
+        <div className='absolute bottom-3 right-3 z-10 rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm'>
+          Hover a node to inspect connections
+        </div>
+
+        {/* Dossier overlay panel — top right corner */}
+        {dossierData && (
+          <div
+            className='absolute right-3 top-14 z-20 flex w-80 max-h-[65%] flex-col overflow-hidden rounded-xl border border-border/50 bg-background/90 shadow-2xl backdrop-blur-md'
+            onMouseEnter={cancelHoverTimeout}
+            onMouseLeave={startHoverTimeout}
+          >
+            {/* Header */}
+            <div className='flex items-center gap-3 border-b border-border/30 bg-background/95 px-4 py-3 backdrop-blur-sm'>
+              <div
+                className='flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white'
+                style={{
+                  backgroundColor:
+                    dossierData.node.type === 'seed'
+                      ? NODE_TYPE_COLORS.seed
+                      : PLATFORM_COLORS[dossierData.node.platform || 'default'] || PLATFORM_COLORS.default,
+                }}
+              >
+                {dossierData.node.type === 'seed'
+                  ? '◎'
+                  : (dossierData.node.platform || '?').charAt(0).toUpperCase()}
+              </div>
+              <div className='min-w-0 flex-1'>
+                <p className='truncate text-sm font-semibold'>{dossierData.node.label}</p>
+                <p className='text-[11px] text-muted-foreground'>
+                  {dossierData.node.type === 'seed'
+                    ? `Seed (${dossierData.node.identifier_type})`
+                    : capitalize(dossierData.node.platform || 'Account')}
+                  {dossierData.node.display_name && ` · ${dossierData.node.display_name}`}
+                </p>
+              </div>
+            </div>
+
+            {/* Connection list */}
+            <div className='flex-1 overflow-y-auto'>
+              {dossierData.connections.length === 0 ? (
+                <div className='px-4 py-6 text-center text-xs text-muted-foreground'>No connections</div>
+              ) : (
+                <div className='divide-y divide-border/20 px-4'>
+                  {dossierData.connections.map((conn) => {
+                    const networkEdges = conn.edges.filter(
+                      (e) => e.type === 'network' || e.type === 'seed_to_account'
+                    )
+                    const mutualEdges = conn.edges.filter((e) => e.type === 'mutual_network')
+                    const analyticsEdges = conn.edges.filter(
+                      (e) => e.type !== 'network' && e.type !== 'seed_to_account' && e.type !== 'mutual_network'
+                    )
+
+                    return (
+                      <div key={conn.otherId} className='py-2.5'>
+                        <div className='flex items-center gap-2'>
+                          <div
+                            className='flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white'
+                            style={{
+                              backgroundColor:
+                                conn.otherType === 'seed'
+                                  ? NODE_TYPE_COLORS.seed
+                                  : PLATFORM_COLORS[conn.otherPlatform || 'default'] || PLATFORM_COLORS.default,
+                            }}
+                          >
+                            {conn.otherType === 'seed'
+                              ? '◎'
+                              : (conn.otherPlatform || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <span className='truncate text-xs font-medium'>{conn.otherLabel}</span>
+                        </div>
+
+                        <div className='mt-1.5 space-y-1 pl-7'>
+                          {/* Network edges — directional follow indicators */}
+                          {networkEdges.length > 0 && (() => {
+                            const outgoing: string[] = []
+                            const incoming: string[] = []
+                            for (const edge of networkEdges) {
+                              const src = typeof edge.source === 'object' ? (edge.source as any).id : edge.source
+                              const isOut = src === hoverNode
+                                ? edge.label === 'follows'
+                                : edge.label !== 'follows'
+                              if (isOut) outgoing.push(edge.platform || '')
+                              else incoming.push(edge.platform || '')
+                            }
+                            const isMutual = outgoing.length > 0 && incoming.length > 0
+
+                            return (
+                              <div className='flex flex-wrap items-center gap-1.5 text-[11px]'>
+                                {isMutual ? (
+                                  <span className='inline-flex items-center gap-1 rounded-full bg-purple-500/20 px-2 py-0.5 font-medium text-purple-400'>
+                                    ↔ mutual follow
+                                  </span>
+                                ) : (
+                                  <>
+                                    {outgoing.length > 0 && (
+                                      <span className='inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2 py-0.5 text-purple-400'>
+                                        → {dossierData.node.label} follows {conn.otherLabel}
+                                      </span>
+                                    )}
+                                    {incoming.length > 0 && (
+                                      <span className='inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2 py-0.5 text-purple-400'>
+                                        ← {conn.otherLabel} follows {dossierData.node.label}
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )
+                          })()}
+
+                          {/* Mutual network edges — show actual shared count + Jaccard */}
+                          {mutualEdges.map((edge, i) => {
+                            const e = edge as any
+                            const sharedCount: number = e.shared_count ?? e.mutual_usernames?.length ?? 0
+                            const jaccard: number | null = e.jaccard ?? null
+                            return (
+                              <div key={`m${i}`} className='flex items-center gap-2 text-[11px]'>
+                                <span
+                                  className='h-2 w-2 shrink-0 rounded-full'
+                                  style={{ backgroundColor: '#06B6D4' }}
+                                />
+                                <span className='flex-1 text-cyan-400'>
+                                  {sharedCount} mutual connections
+                                </span>
+                                {jaccard != null && (
+                                  <span className='shrink-0 tabular-nums text-cyan-500'>
+                                    {(jaccard * 100).toFixed(0)}% overlap
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })}
+
+                          {/* Analytics edges — labeled by class */}
+                          {analyticsEdges.map((edge, i) => {
+                            const color = EDGE_CLASS_COLORS[edge.evidence_class] || '#6B7280'
+                            const confPct = Math.round((edge.confidence || 0) * 100)
+                            const classLabel = EDGE_CLASS_LABELS[edge.evidence_class] || edge.evidence_class
+                            return (
+                              <div key={`a${i}`} className='flex items-center gap-2 text-[11px]'>
+                                <span
+                                  className='h-2 w-2 shrink-0 rounded-full'
+                                  style={{ backgroundColor: color }}
+                                />
+                                <span className='flex-1 truncate text-muted-foreground'>
+                                  {classLabel}: {edge.band || edge.label}
+                                </span>
+                                <span className='shrink-0 tabular-nums' style={{ color }}>
+                                  {confPct}%
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className='border-t border-border/30 px-4 py-2 text-[10px] text-muted-foreground'>
+              {dossierData.connections.length} connected profile
+              {dossierData.connections.length !== 1 ? 's' : ''} ·{' '}
+              {dossierData.connections.reduce((sum, c) => sum + c.edges.length, 0)} total links
+            </div>
+          </div>
+        )}
+
+        <div ref={containerRef} style={{ height: isFullscreen ? '100vh' : `${DEFAULT_HEIGHT}px`, width: '100%' }}>
           <ForceGraph2D
             ref={graphRef as any}
-            width={dimensions.width}
-            height={550}
+            width={isFullscreen ? window.innerWidth : dimensions.width}
+            height={isFullscreen ? window.innerHeight : graphHeight}
             graphData={filteredData}
             nodeId='id'
             nodeCanvasObject={drawNode as any}
@@ -565,7 +931,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
               const size = (node as GraphNode).size || 8
               ctx.fillStyle = color
               ctx.beginPath()
-              ctx.arc(node.x, node.y, size + 4, 0, 2 * Math.PI)
+              ctx.arc(node.x, node.y, size + 6, 0, 2 * Math.PI)
               ctx.fill()
             }}
             linkCanvasObject={drawLink as any}
@@ -577,9 +943,9 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
               setSelectedNode(null)
               setSelectedEdge(null)
             }}
-            cooldownTicks={80}
-            d3AlphaDecay={0.02}
-            d3VelocityDecay={0.3}
+            cooldownTicks={120}
+            d3AlphaDecay={0.015}
+            d3VelocityDecay={0.25}
             d3AlphaMin={0.001}
             enableNodeDrag={true}
             enableZoomInteraction={true}
@@ -589,8 +955,12 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
         </div>
       </Card>
 
-      {/* ── Mutual Connections Panel (always visible if mutuals exist) ── */}
-      <MutualConnectionsPanel edges={graphData.edges} />
+      {/* ── Mutual Connections Panel — only for clicked node ── */}
+      <MutualConnectionsPanel
+        edges={graphData.edges}
+        nodes={graphData.nodes}
+        selectedNodeId={selectedNode?.id ?? null}
+      />
 
       {/* ── Detail Panel ── */}
       {selectedNode && (
@@ -692,17 +1062,13 @@ function NodeDetailPanel({ node, onClose }: { node: GraphNode; onClose: () => vo
 
 function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => void }) {
   const color = EDGE_CLASS_COLORS[edge.evidence_class] || '#6B7280'
-
   const confidencePct = Math.round((edge.confidence || 0) * 100)
 
   return (
     <Card>
       <CardHeader className='flex flex-row items-center justify-between pb-3'>
         <div className='flex items-center gap-3'>
-          <div
-            className='h-1 w-10 rounded'
-            style={{ backgroundColor: color }}
-          />
+          <div className='h-1 w-10 rounded' style={{ backgroundColor: color }} />
           <div>
             <CardTitle className='text-base'>Connection: {edge.label}</CardTitle>
             <p className='text-xs text-muted-foreground'>
@@ -721,7 +1087,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
         </Button>
       </CardHeader>
       <CardContent className='grid gap-3 text-sm'>
-        {/* Confidence meter */}
         <div>
           <div className='mb-1 flex justify-between text-xs'>
             <span className='text-muted-foreground'>Confidence</span>
@@ -737,7 +1102,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
           </div>
         </div>
 
-        {/* Evidence class */}
         <div className='flex justify-between'>
           <span className='text-muted-foreground'>Evidence class</span>
           <Badge
@@ -755,7 +1119,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
           </Badge>
         </div>
 
-        {/* SHAP breakdown for correlation edges */}
         {edge.shap && edge.type === 'correlation' && (
           <div className='space-y-1.5'>
             <span className='text-xs font-medium text-muted-foreground'>Signal Breakdown</span>
@@ -769,7 +1132,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
           </div>
         )}
 
-        {/* Tier 1 links */}
         {edge.tier1_links && edge.tier1_links.length > 0 && (
           <div>
             <span className='text-xs font-medium text-muted-foreground'>Hard Evidence</span>
@@ -783,7 +1145,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
           </div>
         )}
 
-        {/* Detail text */}
         {edge.detail && (
           <div>
             <span className='text-xs font-medium text-muted-foreground'>Detail</span>
@@ -791,7 +1152,6 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
           </div>
         )}
 
-        {/* Mutual usernames list */}
         {(edge as any).mutual_usernames && (edge as any).mutual_usernames.length > 0 && (
           <div>
             <span className='text-xs font-medium text-muted-foreground'>
@@ -815,23 +1175,46 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
 
 // ── Mutual Connections Panel ──
 
-function MutualConnectionsPanel({ edges }: { edges: GraphEdge[] }) {
+function MutualConnectionsPanel({
+  edges,
+  nodes,
+  selectedNodeId,
+}: {
+  edges: GraphEdge[]
+  nodes: GraphNode[]
+  selectedNodeId: string | null
+}) {
   const mutualEdges = edges.filter((e) => e.type === 'mutual_network')
-  if (mutualEdges.length === 0) return null
+  if (mutualEdges.length === 0 || !selectedNodeId) return null
+
+  const nodeLabel = new Map<string, string>()
+  for (const n of nodes) nodeLabel.set(n.id, n.label)
+
+  const relevantEdges = mutualEdges.filter((e) => {
+    const src = typeof e.source === 'object' ? (e.source as any).id : e.source
+    const tgt = typeof e.target === 'object' ? (e.target as any).id : e.target
+    return src === selectedNodeId || tgt === selectedNodeId
+  })
+
+  if (relevantEdges.length === 0) return null
+
+  const selectedLabel = nodeLabel.get(selectedNodeId) || selectedNodeId
 
   return (
     <Card>
       <CardHeader className='pb-2'>
         <CardTitle className='flex items-center gap-2 text-sm font-medium'>
           <span className='h-3 w-3 rounded-full bg-cyan-500' />
-          Mutual Connections
+          Mutual Connections — {selectedLabel}
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className='space-y-4'>
-          {mutualEdges.map((edge, i) => {
-            const src = typeof edge.source === 'object' ? (edge.source as any).label || (edge.source as any).id : edge.source
-            const tgt = typeof edge.target === 'object' ? (edge.target as any).label || (edge.target as any).id : edge.target
+          {relevantEdges.map((edge, i) => {
+            const src = typeof edge.source === 'object' ? (edge.source as any).id : edge.source
+            const tgt = typeof edge.target === 'object' ? (edge.target as any).id : edge.target
+            const otherId = src === selectedNodeId ? tgt : src
+            const otherLabel = nodeLabel.get(otherId) || otherId
             const usernames = (edge as any).mutual_usernames as string[] | undefined
             const sharedCount = (edge as any).shared_count as number | undefined
             const jaccard = (edge as any).jaccard as number | undefined
@@ -843,8 +1226,8 @@ function MutualConnectionsPanel({ edges }: { edges: GraphEdge[] }) {
                     <Badge variant='outline' className='border-purple-500/50 text-[10px] text-purple-400'>
                       {edge.platform}
                     </Badge>
-                    <span className='text-xs text-muted-foreground'>
-                      {src} ↔ {tgt}
+                    <span className='text-xs font-medium'>
+                      {selectedLabel} ↔ {otherLabel}
                     </span>
                   </div>
                   <div className='flex items-center gap-2'>

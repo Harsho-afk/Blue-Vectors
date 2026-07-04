@@ -12,6 +12,7 @@ COPY schema.sql ./
 COPY collector/ ./collector/
 COPY insights/ ./insights/
 COPY llm/ ./llm/
+COPY reporting/ ./reporting/
 COPY validation/ ./validation/
 COPY data/ ./data/
 

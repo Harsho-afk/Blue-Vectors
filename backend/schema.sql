@@ -151,3 +151,23 @@ CREATE TABLE IF NOT EXISTS intelligence_reports (
 
 CREATE INDEX IF NOT EXISTS intelligence_reports_case_id_idx
 ON intelligence_reports(case_id);
+
+-- 10. socmint_reports (versioned investigation report snapshots)
+CREATE TABLE IF NOT EXISTS socmint_reports (
+    id                  SERIAL PRIMARY KEY,
+    case_id             INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    version             INTEGER NOT NULL DEFAULT 1,
+    status              TEXT NOT NULL DEFAULT 'generating'
+                        CHECK (status IN ('generating', 'ready', 'failed')),
+    report_json         JSONB,
+    source_snapshot     JSONB,
+    methodology_version TEXT NOT NULL DEFAULT '1.0',
+    generated_by        INTEGER NOT NULL REFERENCES users(id),
+    generated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    content_hash        TEXT,
+    error_message       TEXT,
+    UNIQUE (case_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS socmint_reports_case_id_idx
+ON socmint_reports(case_id);

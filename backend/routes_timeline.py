@@ -175,117 +175,33 @@ def get_case_timeline(case_id: int, current_user: dict = Depends(get_current_use
                     } or None,
                 })
 
-        # ─── 3. OSINT Lookups ────────────────────────────────────────────────
+        # ─── 3. Breach dates (real-world events, not ARIA activity) ───────────
         cur.execute(
-            """SELECT id, lookup_type, input_value, result_json, created_at
-               FROM osint_lookups WHERE case_id = %s""",
+            """SELECT id, lookup_type, input_value, result_json
+               FROM osint_lookups WHERE case_id = %s AND lookup_type IN ('hibp', 'xposedornot')""",
             (case_id,),
         )
         for row in cur.fetchall():
             r = dict(row)
             result = _parse_json(r["result_json"])
-            lookup_type = r["lookup_type"]
-
-            # Discovery event
-            events.append({
-                "id": f"osint:{r['id']}",
-                "timestamp": _ts(r["created_at"]),
-                "event_type": "osint_lookup",
-                "platform": None,
-                "account_id": None,
-                "account_label": None,
-                "title": f"OSINT lookup: {lookup_type}",
-                "description": f"Searched for '{r['input_value']}'",
-            })
-
-            # Extract breach dates
-            if lookup_type in ("hibp", "xposedornot"):
-                breaches = result.get("breaches", [])
-                for b in breaches[:10]:
-                    breach_date = b.get("breach_date") or b.get("BreachDate")
-                    if breach_date:
-                        events.append({
-                            "id": f"breach:{r['id']}:{b.get('name', b.get('Name', ''))}",
-                            "timestamp": breach_date if "T" in str(breach_date) else f"{breach_date}T00:00:00Z",
-                            "event_type": "breach",
-                            "platform": None,
-                            "account_id": None,
-                            "account_label": None,
-                            "title": f"Breach: {b.get('name', b.get('Name', 'Unknown'))}",
-                            "description": f"Email '{r['input_value']}' found in data breach",
-                            "metadata": {
-                                "domain": b.get("domain", b.get("Domain")),
-                                "data_classes": b.get("data_classes", b.get("DataClasses", [])),
-                            },
-                        })
-
-        # ─── 4. Correlation events ───────────────────────────────────────────
-        cur.execute(
-            """SELECT lr.id, lr.confidence, lr.shap_json, lr.created_at,
-                      a1.platform as a_platform, a1.username as a_username,
-                      a2.platform as b_platform, a2.username as b_username
-               FROM linkage_results lr
-               JOIN accounts a1 ON lr.account_a_id = a1.id
-               JOIN accounts a2 ON lr.account_b_id = a2.id
-               WHERE lr.case_id = %s""",
-            (case_id,),
-        )
-        for row in cur.fetchall():
-            r = dict(row)
-            shap = _parse_json(r["shap_json"])
-            conf = float(r["confidence"] or 0)
-            band = shap.get("band", "Low")
-            events.append({
-                "id": f"correlation:{r['id']}",
-                "timestamp": _ts(r["created_at"]),
-                "event_type": "correlation",
-                "platform": None,
-                "account_id": None,
-                "account_label": None,
-                "title": f"Correlation: {r['a_platform']}:{r['a_username']} ↔ {r['b_platform']}:{r['b_username']}",
-                "description": f"{conf:.0f}% confidence ({band})",
-                "confidence": band.lower(),
-            })
-
-        # ─── 5. Insight events ───────────────────────────────────────────────
-        cur.execute(
-            """SELECT id, account_id, category, claim, confidence, created_at
-               FROM insights WHERE case_id = %s""",
-            (case_id,),
-        )
-        for row in cur.fetchall():
-            r = dict(row)
-            acct = account_map.get(r["account_id"], {})
-            label = f"{acct['platform']}:{acct['username']}" if acct else None
-            events.append({
-                "id": f"insight:{r['id']}",
-                "timestamp": _ts(r["created_at"]),
-                "event_type": "insight",
-                "platform": acct.get("platform"),
-                "account_id": r["account_id"],
-                "account_label": label,
-                "title": f"Insight: {r['category'].replace('_', ' ').title()}",
-                "description": r["claim"],
-                "confidence": r["confidence"],
-            })
-
-        # ─── 6. Intelligence report events ───────────────────────────────────
-        cur.execute(
-            """SELECT id, created_at, label FROM intelligence_reports WHERE case_id = %s""",
-            (case_id,),
-        )
-        for row in cur.fetchall():
-            r = dict(row)
-            events.append({
-                "id": f"report:{r['id']}",
-                "timestamp": _ts(r["created_at"]),
-                "event_type": "report",
-                "platform": None,
-                "account_id": None,
-                "account_label": None,
-                "title": "Intelligence Report Generated",
-                "description": r.get("label", ""),
-            })
+            breaches = result.get("breaches", [])
+            for b in breaches[:10]:
+                breach_date = b.get("breach_date") or b.get("BreachDate")
+                if breach_date:
+                    events.append({
+                        "id": f"breach:{r['id']}:{b.get('name', b.get('Name', ''))}",
+                        "timestamp": breach_date if "T" in str(breach_date) else f"{breach_date}T00:00:00Z",
+                        "event_type": "breach",
+                        "platform": None,
+                        "account_id": None,
+                        "account_label": None,
+                        "title": f"Breach: {b.get('name', b.get('Name', 'Unknown'))}",
+                        "description": f"Email '{r['input_value']}' found in data breach",
+                        "metadata": {
+                            "domain": b.get("domain", b.get("Domain")),
+                            "data_classes": b.get("data_classes", b.get("DataClasses", [])),
+                        },
+                    })
 
         # ─── Sort all events by timestamp ────────────────────────────────────
         def sort_key(e):

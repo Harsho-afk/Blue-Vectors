@@ -48,6 +48,27 @@ PLATFORM_ALIASES = {
     "instagram": "instagram",
 }
 
+import re
+from urllib.parse import urlparse
+
+URL_PLATFORM_PATTERNS = [
+    (re.compile(r"(?:reddit\.com|old\.reddit\.com)/u(?:ser)?/([A-Za-z0-9_-]+)", re.I), "reddit"),
+    (re.compile(r"(?:twitter\.com|x\.com)/([A-Za-z0-9_]+)", re.I), "twitter"),
+    (re.compile(r"github\.com/([A-Za-z0-9_-]+)", re.I), "github"),
+    (re.compile(r"instagram\.com/([A-Za-z0-9_.]+)", re.I), "instagram"),
+]
+
+
+def _parse_profile_url(url: str) -> tuple[str, str] | None:
+    """Extract (platform, username) from a profile URL. Returns None if unrecognized."""
+    for pattern, platform in URL_PLATFORM_PATTERNS:
+        m = pattern.search(url)
+        if m:
+            username = m.group(1)
+            if username.lower() not in ("explore", "search", "about", "settings", "login"):
+                return (platform, username)
+    return None
+
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
@@ -227,7 +248,28 @@ async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
     return 0
 
 
-# ─────────────────────────────────────────────────────────────────────────
+async def _process_profile_url_seed(case_id: int, ident: dict, emit) -> int:
+    """Handle a profile_url identifier: parse URL, extract platform+username, collect."""
+    url = ident["value"]
+    parsed = _parse_profile_url(url)
+    if not parsed:
+        await emit({
+            "step": "collect", "status": "error",
+            "platform": "unknown", "username": url,
+            "error": f"Could not parse platform/username from URL: {url}",
+        })
+        return 0
+
+    platform, username = parsed
+    await emit({
+        "step": "collect", "status": "running",
+        "platform": platform, "username": username,
+        "message": f"Collecting from {platform}/{username} (parsed from URL)",
+    })
+    return await _collect_one_platform(case_id, platform, username, emit)
+
+
+# ──────────────────────────────────────────────────────────���──────────────
 # Analysis phase workers (correlation + insights). Both are blocking/sync
 # under the hood (psycopg2, numpy, sklearn), so each is offloaded to a
 # worker thread via run_in_executor — that's what lets them genuinely run
@@ -326,22 +368,26 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
     usernames = [i for i in identifiers if i["identifier_type"] == "username"]
     emails = [i for i in identifiers if i["identifier_type"] == "email"]
     phones = [i for i in identifiers if i["identifier_type"] == "phone"]
+    profile_urls = [i for i in identifiers if i["identifier_type"] == "profile_url"]
 
+    total_actionable = len(usernames) + len(emails) + len(phones) + len(profile_urls)
     await emit({
         "step": "init",
         "status": "running",
-        "message": f"Starting investigation with {len(identifiers)} seed(s) ({len(usernames) + len(emails) + len(phones)} running in parallel)",
+        "message": f"Starting investigation with {len(identifiers)} seed(s) ({total_actionable} running in parallel)",
         "total_seeds": len(identifiers),
         "usernames": len(usernames),
         "emails": len(emails),
         "phones": len(phones),
+        "profile_urls": len(profile_urls),
     })
 
-    # ── Phase 1: all seed collectors, concurrently ──────────────────────────
+    # ── Phase 1: all seed collectors, concurrently ────────────────���─────────
     collector_tasks = (
         [_process_username_seed(case_id, ident, emit) for ident in usernames]
         + [_process_email_seed(case_id, ident, emit) for ident in emails]
         + [_process_phone_seed(case_id, ident, emit) for ident in phones]
+        + [_process_profile_url_seed(case_id, ident, emit) for ident in profile_urls]
     )
 
     collected_accounts = 0

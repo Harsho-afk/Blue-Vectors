@@ -178,22 +178,37 @@ def generate_briefing(conn, case_id: int) -> dict:
 
     result = None
     model_used = None
+    errors = []
 
     if groq_key:
         try:
             result, model_used = _call_groq(groq_key, user_prompt)
             log.info("Case %d: used Groq (%s)", case_id, model_used)
         except Exception as e:
-            log.warning("Groq call failed: %s", e)
-            if not gemini_key:
-                raise RuntimeError(f"Groq call failed and no Gemini fallback: {e}")
+            log.warning("Groq call failed for case %d: %s", case_id, e)
+            errors.append(("Groq", e))
 
     if result is None and gemini_key:
         try:
             result, model_used = _call_gemini(gemini_key, user_prompt)
             log.info("Case %d: used Gemini (%s)", case_id, model_used)
         except Exception as e:
-            raise RuntimeError(f"LLM call failed: {e}")
+            log.warning("Gemini call failed for case %d: %s", case_id, e)
+            errors.append(("Gemini", e))
+
+    if result is None:
+        providers_tried = [name for name, _ in errors]
+        is_rate_limit = any(
+            "429" in str(err) or "rate" in str(err).lower()
+            for _, err in errors
+        )
+        if is_rate_limit:
+            msg = "Intelligence generation temporarily unavailable — LLM rate limits exceeded. Please try again in a few minutes."
+        elif not providers_tried:
+            msg = "No LLM provider available. Please configure GROQ_API_KEY or GEMINI_API_KEY."
+        else:
+            msg = f"Intelligence generation failed — could not reach LLM providers ({', '.join(providers_tried)}). Please try again shortly."
+        raise RuntimeError(msg)
 
     if "narrative" not in result or "claims" not in result:
         raise RuntimeError(

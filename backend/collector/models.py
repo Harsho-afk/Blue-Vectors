@@ -67,5 +67,27 @@ class PhoneProfile:
     # Web mentions
     web_mentions: list = field(default_factory=list)  # list of {url, title, snippet}
 
+    # ── Twilio Lookup v2 ────────────────────────────────────────────────────────
+    # Populated only when TWILIO credentials are configured.
+    twilio_valid: Optional[bool] = None
+    twilio_national_format: Optional[str] = None        # e.g. "(415) 992-9960"
+    twilio_calling_country_code: Optional[str] = None   # e.g. "1"
+    twilio_country_code: Optional[str] = None           # ISO alpha-2 e.g. "US"
+    twilio_validation_errors: list = field(default_factory=list)  # e.g. ["TOO_LONG"]
+    # Line Type Intelligence package
+    twilio_line_type: Optional[str] = None              # "mobile"|"landline"|"voip"|...
+    twilio_carrier_name: Optional[str] = None           # authoritative carrier name
+    twilio_mobile_country_code: Optional[str] = None    # MCC e.g. "310"
+    twilio_mobile_network_code: Optional[str] = None    # MNC e.g. "260"
+    # Caller Name (CNAM) package — US only
+    twilio_caller_name: Optional[str] = None            # registered name on the line
+    twilio_caller_type: Optional[str] = None            # "CONSUMER"|"BUSINESS"
+
+    # ── Geocoding (Nominatim / OpenStreetMap) ────────────────────────────────
+    # Derived from the location string returned by phonenumbers or Twilio.
+    geo_lat: Optional[float] = None
+    geo_lon: Optional[float] = None
+    geo_display_name: Optional[str] = None              # human-readable full address
+
     def to_dict(self) -> dict:
         return asdict(self)

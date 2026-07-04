@@ -7,6 +7,7 @@ from routes_osint import router as osint_router
 from routes_run import router as run_router
 from routes_graph import router as graph_router
 from routes_timeline import router as timeline_router
+from routes_reports import router as reports_router
 from auth import get_current_user
 from collector.base import collect_async
 
@@ -35,6 +36,7 @@ app.include_router(osint_router)
 app.include_router(run_router)
 app.include_router(graph_router)
 app.include_router(timeline_router)
+app.include_router(reports_router)
 
 
 # ── Existing routes ───────────────────────────────────────────────────────────
