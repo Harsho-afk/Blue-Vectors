@@ -57,6 +57,7 @@ def patched_user_init(self, client, data):
     description.setdefault("urls", [])
     legacy.setdefault("withheld_in_countries", [])
     legacy.setdefault("withheld_scope", None)
+    legacy.setdefault("pinned_tweet_ids_str", [])
     original_user_init(self, client, data)
 
 

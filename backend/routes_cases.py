@@ -444,6 +444,8 @@ async def collect_for_case(
         profile = await collect_async(body.platform, body.username, limit=body.limit)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Collection failed: {e}")
 
     conn = get_db_conn()
     try:
