@@ -1,22 +1,38 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
-  Bell,
-  BriefcaseBusiness,
-  CheckCircle2,
-  CircleDot,
-  Clock3,
   FolderOpen,
+  Activity,
+  CheckCircle,
+  TrendingUp,
   Plus,
   Search,
-  Sparkles,
 } from 'lucide-react'
 import { API } from '@/lib/aria-api'
-import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
+import { ProfileDropdown } from '@/components/profile-dropdown'
+import { Search as SearchBar } from '@/components/search'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ThemeSwitch } from '@/components/theme-switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 interface Case {
   id: number
@@ -28,60 +44,16 @@ interface Case {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', {
-    day: 'numeric',
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-US', {
     month: 'short',
+    day: 'numeric',
     year: 'numeric',
   })
 }
 
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  accent = 'orange',
-}: {
-  label: string
-  value: string | number
-  icon: React.ComponentType<{ className?: string }>
-  accent?: 'orange' | 'green' | 'blue' | 'slate'
-}) {
-  const styles = {
-    orange:
-      'bg-orange-50 text-orange-600 ring-orange-100 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/20',
-    green:
-      'bg-emerald-50 text-emerald-600 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
-    blue: 'bg-sky-50 text-sky-600 ring-sky-100 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/20',
-    slate:
-      'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700/40 dark:text-slate-300 dark:ring-slate-600',
-  }
-
-  return (
-    <div className='rounded-xl border border-orange-100 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-white/10 dark:bg-slate-900'>
-      <div className='flex items-center justify-between gap-4'>
-        <div>
-          <p className='text-sm font-medium text-slate-500 dark:text-slate-400'>
-            {label}
-          </p>
-          <div className='mt-2 text-3xl font-bold text-slate-950 dark:text-white'>
-            {value}
-          </div>
-        </div>
-        <div className={cn('rounded-xl p-3 ring-1', styles[accent])}>
-          <Icon className='size-5' />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function EmptyModule() {
-  return (
-    <section
-      aria-label='Empty dashboard module'
-      className='min-h-[220px] rounded-xl border border-dashed border-orange-200 bg-white/70 shadow-sm dark:border-slate-700 dark:bg-slate-900/70'
-    />
-  )
+function padId(id: number) {
+  return `CASE-${String(id).padStart(4, '0')}`
 }
 
 export function Dashboard() {
@@ -101,173 +73,208 @@ export function Dashboard() {
       .finally(() => setIsLoading(false))
   }, [])
 
-  const stats = useMemo(() => {
-    const open = cases.filter((c) => c.status === 'open').length
-    const closed = cases.filter((c) => c.status === 'closed').length
-    const inProgress = cases.filter(
-      (c) => c.status !== 'open' && c.status !== 'closed'
-    ).length
-
-    return {
-      total: isLoading ? '...' : cases.length,
-      open: isLoading ? '...' : open,
-      inProgress: isLoading ? '...' : inProgress,
-      closed: isLoading ? '...' : closed,
-    }
-  }, [cases, isLoading])
+  const openCases = cases.filter((c) => c.status === 'open')
+  const closedCases = cases.filter((c) => c.status === 'closed')
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const thisWeek = cases.filter((c) => new Date(c.created_at) > sevenDaysAgo)
 
   return (
-    <div className='min-h-svh bg-orange-50/60 text-slate-950 dark:bg-slate-950 dark:text-white'>
-      <Header className='border-b border-orange-100 bg-white/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85'>
-        <div className='flex min-w-0 flex-1 items-center gap-3'>
-          <div className='flex min-w-0 flex-1 items-center gap-3 rounded-full border border-orange-100 bg-orange-50 px-4 py-2 dark:border-white/10 dark:bg-slate-900'>
-            <Search className='size-4 shrink-0 text-orange-500' />
-            <input
-              className='min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500'
-              placeholder='Search ARIA cases'
-            />
-          </div>
-          <Button
-            size='icon'
-            variant='outline'
-            className='rounded-full border-orange-100 bg-white text-slate-700 hover:bg-orange-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
-          >
-            <Bell className='size-4' />
-          </Button>
-          <ThemeSwitch />
-        </div>
+    <>
+      <Header>
+        <SearchBar className='me-auto' />
+        <ThemeSwitch />
+        <ConfigDrawer />
+        <ProfileDropdown />
       </Header>
 
-      <Main fluid className='workspace-grid px-4 py-6 sm:px-8'>
-        <section className='overflow-hidden rounded-2xl border border-orange-100 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900'>
-          <div className='grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center'>
-            <div>
-              <div className='mb-4 inline-flex items-center gap-2 rounded-full bg-orange-100 px-3 py-1 text-sm font-semibold text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'>
-                <Sparkles className='size-4' />
-                ARIA
-              </div>
-              <h1 className='max-w-3xl text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl dark:text-white'>
-                Investigation dashboard
-              </h1>
-              <p className='mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400'>
-                Create investigations, review active cases, and keep the
-                workspace ready for new intelligence modules.
-              </p>
-              {error && (
-                <p className='mt-3 text-sm text-red-600 dark:text-red-400'>
-                  Case API unavailable: {error}
-                </p>
-              )}
-            </div>
-            <div className='flex flex-wrap gap-3'>
-              <Button
-                className='bg-orange-500 text-white shadow-sm hover:bg-orange-600'
-                onClick={() => navigate({ to: '/investigate' })}
-              >
-                <Plus className='size-4' />
-                New investigation
-              </Button>
-              <Button
-                variant='outline'
-                className='border-orange-200 bg-white text-orange-700 hover:bg-orange-50 dark:border-orange-500/30 dark:bg-slate-900 dark:text-orange-300 dark:hover:bg-orange-500/10'
-                onClick={() => navigate({ to: '/cases' })}
-              >
-                <FolderOpen className='size-4' />
-                Cases
-              </Button>
-            </div>
+      <Main>
+        <div className='mb-2 flex items-center justify-between space-y-2'>
+          <div>
+            <h1 className='text-2xl font-bold tracking-tight'>Dashboard</h1>
+            <p className='text-muted-foreground'>
+              Overview of your investigations
+            </p>
           </div>
-        </section>
-
-        <div className='mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
-          <StatCard
-            label='Total cases'
-            value={stats.total}
-            icon={BriefcaseBusiness}
-          />
-          <StatCard
-            label='Open cases'
-            value={stats.open}
-            icon={Clock3}
-            accent='blue'
-          />
-          <StatCard
-            label='In progress'
-            value={stats.inProgress}
-            icon={CircleDot}
-            accent='slate'
-          />
-          <StatCard
-            label='Closed cases'
-            value={stats.closed}
-            icon={CheckCircle2}
-            accent='green'
-          />
+          <Button onClick={() => navigate({ to: '/investigate' })}>
+            <Plus />
+            New Investigation
+          </Button>
         </div>
 
-        <div className='mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]'>
-          <section className='rounded-xl border border-orange-100 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-slate-900'>
-            <div className='mb-4 flex items-center justify-between gap-4'>
-              <h2 className='text-lg font-semibold text-slate-950 dark:text-white'>
-                Recent cases
-              </h2>
-              <Button
-                variant='ghost'
-                className='text-orange-700 hover:bg-orange-50 hover:text-orange-800 dark:text-orange-300 dark:hover:bg-orange-500/10'
-                onClick={() => navigate({ to: '/cases' })}
-              >
-                View all
-              </Button>
-            </div>
-            <div className='overflow-hidden rounded-lg border border-slate-100 dark:border-white/10'>
-              <div className='grid grid-cols-[1.4fr_0.7fr_0.8fr] bg-orange-50 px-4 py-3 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:bg-slate-800 dark:text-slate-400'>
-                <span>Case</span>
-                <span>Status</span>
-                <span>Created</span>
-              </div>
-              {cases.slice(0, 5).map((c) => (
-                <button
-                  key={c.id}
-                  className='grid w-full grid-cols-[1.4fr_0.7fr_0.8fr] border-t border-slate-100 px-4 py-3 text-left text-sm hover:bg-orange-50 dark:border-white/10 dark:hover:bg-slate-800'
-                  onClick={() =>
-                    navigate({ to: '/cases/$id', params: { id: String(c.id) } })
-                  }
-                >
-                  <span className='truncate font-medium text-slate-900 dark:text-slate-100'>
-                    {c.title}
-                  </span>
-                  <span className='text-slate-500 capitalize dark:text-slate-400'>
-                    {c.status}
-                  </span>
-                  <span className='text-slate-500 dark:text-slate-400'>
-                    {formatDate(c.created_at)}
-                  </span>
-                </button>
+        {error && (
+          <div className='mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive'>
+            Failed to load cases: {error}
+          </div>
+        )}
+
+        {/* Stat Cards */}
+        <div className='mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+          {isLoading ? (
+            <>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Card key={i}>
+                  <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                    <Skeleton className='h-4 w-24' />
+                    <Skeleton className='h-4 w-4' />
+                  </CardHeader>
+                  <CardContent>
+                    <Skeleton className='mb-1 h-7 w-16' />
+                    <Skeleton className='h-3 w-32' />
+                  </CardContent>
+                </Card>
               ))}
-              {!isLoading && cases.length === 0 && (
-                <div className='flex min-h-[150px] flex-col items-center justify-center gap-3 text-center text-slate-500 dark:text-slate-400'>
-                  <BriefcaseBusiness className='size-10 text-orange-400' />
-                  <p>No cases yet.</p>
-                  <Button
-                    className='bg-orange-500 text-white hover:bg-orange-600'
-                    onClick={() => navigate({ to: '/investigate' })}
-                  >
-                    Create first investigation
-                  </Button>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <EmptyModule />
+            </>
+          ) : (
+            <>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                  <CardTitle className='text-sm font-medium'>
+                    Total Cases
+                  </CardTitle>
+                  <FolderOpen className='h-4 w-4 text-muted-foreground' />
+                </CardHeader>
+                <CardContent>
+                  <div className='text-2xl font-bold'>{cases.length}</div>
+                  <p className='text-xs text-muted-foreground'>
+                    All investigations
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                  <CardTitle className='text-sm font-medium'>
+                    Active Investigations
+                  </CardTitle>
+                  <Activity className='h-4 w-4 text-muted-foreground' />
+                </CardHeader>
+                <CardContent>
+                  <div className='text-2xl font-bold'>{openCases.length}</div>
+                  <p className='text-xs text-muted-foreground'>Currently open</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                  <CardTitle className='text-sm font-medium'>
+                    Closed Cases
+                  </CardTitle>
+                  <CheckCircle className='h-4 w-4 text-muted-foreground' />
+                </CardHeader>
+                <CardContent>
+                  <div className='text-2xl font-bold'>
+                    {closedCases.length}
+                  </div>
+                  <p className='text-xs text-muted-foreground'>Completed</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                  <CardTitle className='text-sm font-medium'>
+                    Opened This Week
+                  </CardTitle>
+                  <TrendingUp className='h-4 w-4 text-muted-foreground' />
+                </CardHeader>
+                <CardContent>
+                  <div className='text-2xl font-bold'>{thisWeek.length}</div>
+                  <p className='text-xs text-muted-foreground'>Last 7 days</p>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
 
-        <div className='mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3'>
-          <EmptyModule />
-          <EmptyModule />
-          <EmptyModule />
-        </div>
+        {/* Recent Investigations */}
+        <Card className='mt-4'>
+          <CardHeader>
+            <CardTitle>Recent Investigations</CardTitle>
+            <CardDescription>
+              Your {Math.min(cases.length, 10)} most recent cases
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className='space-y-3'>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className='h-10 w-full' />
+                ))}
+              </div>
+            ) : cases.length === 0 ? (
+              <div className='flex flex-col items-center justify-center py-12 text-center'>
+                <Search className='mb-4 h-12 w-12 text-muted-foreground/50' />
+                <h3 className='text-lg font-medium'>No investigations yet</h3>
+                <p className='mt-1 text-sm text-muted-foreground'>
+                  Start your first investigation to see it here.
+                </p>
+                <Button
+                  className='mt-4'
+                  onClick={() => navigate({ to: '/investigate' })}
+                >
+                  <Plus />
+                  Start your first investigation
+                </Button>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Case</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Identifiers</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className='text-right'>Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cases.slice(0, 10).map((c) => (
+                    <TableRow
+                      key={c.id}
+                      className='cursor-pointer'
+                      onClick={() =>
+                        navigate({ to: '/cases/$id', params: { id: String(c.id) } })
+                      }
+                    >
+                      <TableCell>
+                        <div className='font-medium'>{c.title}</div>
+                        <div className='text-xs text-muted-foreground'>
+                          {padId(c.id)}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            c.status === 'open' ? 'default' : 'secondary'
+                          }
+                        >
+                          {c.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className='text-muted-foreground'>
+                        —
+                      </TableCell>
+                      <TableCell>{formatDate(c.created_at)}</TableCell>
+                      <TableCell className='text-right'>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate({
+                              to: '/cases/$id',
+                              params: { id: String(c.id) },
+                            })
+                          }}
+                        >
+                          View
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       </Main>
-    </div>
+    </>
   )
 }
