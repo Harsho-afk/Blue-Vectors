@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import Cookie, HTTPException, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 
 # ── Config from env ───────────────────────────────────────────────────────────
 
@@ -139,17 +139,24 @@ _init_db()
 
 # ── Password hashing ──────────────────────────────────────────────────────────
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_BCRYPT_MAX_BYTES = 72  # bcrypt's hard limit — enforce explicitly rather than relying on the library to truncate
 
 
 def hash_password(plain: str) -> str:
-    """Return a bcrypt hash of *plain*."""
-    return _pwd_ctx.hash(plain)
+    """Return a bcrypt hash of *plain*, stored as a UTF-8 string."""
+    encoded = plain.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_BYTES:
+        raise ValueError(f"Password must be at most {_BCRYPT_MAX_BYTES} bytes")
+    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Return True if *plain* matches the stored bcrypt *hashed* value."""
-    return _pwd_ctx.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        # Malformed/unsupported hash string in the DB
+        return False
 
 
 # ── JWT encode / decode ───────────────────────────────────────────────────────
@@ -251,4 +258,3 @@ def get_current_user(aria_token: Optional[str] = Cookie(default=None)) -> dict:
         raise credentials_exc
 
     return dict(user)
-
