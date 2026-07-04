@@ -1,7 +1,7 @@
 # ARIA — Adaptive Resolution of Identity Across Platforms
 
 **SOCMINT-based cross-platform identity resolution & case management system**
-Hackathon deadline: **July 4, 2026** | Today: June 19 (15 days) | Team: 3 members
+Hackathon deadline: **July 4, 2026** | Team: 3 members
 
 ---
 
@@ -9,7 +9,7 @@ Hackathon deadline: **July 4, 2026** | Today: June 19 (15 days) | Team: 3 member
 
 ARIA is a case-centric OSINT investigation platform. An investigator creates a **case**, attaches one or more **seed identifiers** (username, email, phone, profile URL), and ARIA:
 
-1. Collects public digital footprints across platforms (Reddit, Twitter, username enumeration via Sherlock, breach data via XposedOrNot/HaveIBeenPwned)
+1. Collects public digital footprints across platforms (Reddit, Twitter, GitHub, Instagram, username enumeration via Sherlock, breach data via XposedOrNot/HaveIBeenPwned)
 2. Extracts features for each discovered account (profile similarity, stylometry, temporal behaviour, content/sentiment) — _not yet built_
 3. Correlates accounts that may belong to the same real-world person, with a **confidence score (0–100%)** and a **per-signal explanation** — _not yet built_
 4. Visualises results: ranked candidates, evidence breakdown, social graph, unified timeline — _not yet built_
@@ -42,7 +42,7 @@ Layer 6  Profiling + Report       Suspect profile aggregation → SOCMINT report
 End-to-end flow (target):
 
 1. Investigator registers/logs in, creates a case with a title and one or more identifiers ✅
-2. Layer 0 routes each identifier by type (username → Reddit/Twitter, email → breach lookup) ✅
+2. Layer 0 routes each identifier by type (username → Reddit/Twitter/GitHub/Instagram, email → breach lookup) ✅
 3. Layer 1 collects public posts, bios, timestamps, profile images, OSINT lookup results — all scoped to `case_id` ✅
 4. Layer 2 computes per-account feature scores: profile similarity, stylometric fingerprint, temporal rhythm, content/sentiment, (image similarity — stretch) 🔲
 5. Layer 3 fuses feature scores → ranked candidate matches with confidence scores 🔲
@@ -58,15 +58,15 @@ End-to-end flow (target):
 Given the remaining timeline, the correlation engine ships as a **rule-based weighted MVP first**. ML components (Siamese LSTM, GAT, trained XGBoost+SHAP) are stretch goals attempted only if Phases 1–3 land early. The frontend and report always display real evidence — MVP or ML-based, the _interface_ doesn't change, only what powers the score does.
 
 | Component           | MVP (guaranteed)                      | Stretch (if time allows)                      |
-| ------------------- | ------------------------------------- | --------------------------------------------- |
-| Username similarity | rapidfuzz (Levenshtein/Jaro-Winkler)  | —                                             |
-| Bio similarity      | sentence-transformers cosine          | —                                             |
-| Temporal similarity | histogram comparison (Jensen-Shannon) | —                                             |
-| Image similarity    | skipped, neutral value                | CLIP cosine similarity                        |
-| Stylometry          | TF-IDF cosine similarity fallback     | Siamese LSTM (PAN 2020, target AUC > 0.75)    |
-| Graph reasoning     | skipped                               | GAT on Foursquare-Twitter, 128-dim embeddings |
-| Fusion              | weighted sum of available signals     | XGBoost on 6 features                         |
-| Explainability      | per-component score breakdown ("why") | SHAP TreeExplainer                            |
+| -------------------- | -------------------------------------- | ----------------------------------------------- |
+| Username similarity  | rapidfuzz (Levenshtein/Jaro-Winkler)  | —                                               |
+| Bio similarity       | sentence-transformers cosine          | —                                               |
+| Temporal similarity  | histogram comparison (Jensen-Shannon) | —                                               |
+| Image similarity     | skipped, neutral value                | CLIP cosine similarity                          |
+| Stylometry           | TF-IDF cosine similarity fallback     | Siamese LSTM (PAN 2020, target AUC > 0.75)      |
+| Graph reasoning      | skipped                               | GAT on Foursquare-Twitter, 128-dim embeddings   |
+| Fusion               | weighted sum of available signals     | XGBoost on 6 features                           |
+| Explainability       | per-component score breakdown ("why") | SHAP TreeExplainer                              |
 
 ### MVP Correlation Scoring Spec (Layer 2/3 — design target, not yet implemented)
 
@@ -111,16 +111,18 @@ This JSON shape will be stored in `linkage_results.shap_json` (field name kept f
 
 ## Tech Stack
 
-| Domain                | Technology                                                                      | Status                                                           |
-| --------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Auth                  | JWT (httpOnly cookie), bcrypt, custom routes (`routes_auth.py`)                 | ✅ Built                                                         |
-| Routing (frontend)    | react-router-dom                                                                | ✅ Built                                                         |
-| Backend               | FastAPI (Python 3.12)                                                           | ✅ Built                                                         |
+| Domain                | Technology                                                                       | Status                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Auth                  | JWT (httpOnly cookie), bcrypt, custom routes (`routes_auth.py`)                 | ✅ Built                                                          |
+| Routing (frontend)    | react-router-dom                                                                | ✅ Built                                                          |
+| Backend               | FastAPI (Python 3.12)                                                           | ✅ Built                                                          |
 | Primary DB            | PostgreSQL                                                                      | ✅ Built — case-centric schema (see below)                       |
-| OSINT — username enum | Sherlock (`sherlock-project` site DB + custom async checker)                    | ✅ Built                                                         |
-| OSINT — breach lookup | XposedOrNot (free, no key) — falls back to HIBP v3 if `HIBP_API_KEY` is set     | ✅ Built                                                         |
-| Reddit Scraping       | Self-hosted Redlib container → Reddit public JSON API → public Redlib fallbacks | ✅ Built                                                         |
-| Twitter Scraping      | twikit (browser cookies)                                                        | ✅ Built                                                         |
+| OSINT — username enum | Sherlock (`sherlock-project` site DB + custom async checker)                    | ✅ Built                                                          |
+| OSINT — breach lookup | XposedOrNot (free, no key) — falls back to HIBP v3 if `HIBP_API_KEY` is set     | ✅ Built                                                          |
+| Reddit Scraping       | Self-hosted Redlib container → Reddit public JSON API → public Redlib fallbacks | ✅ Built                                                          |
+| Twitter Scraping      | twikit (browser cookies)                                                        | ✅ Built                                                          |
+| GitHub Scraping       | GitHub public REST API v3 (optional `GITHUB_TOKEN` for higher rate limit)       | ✅ Built                                                          |
+| Instagram Scraping    | instaloader, anonymous/public-only (no login, no Stories)                       | ✅ Built                                                          |
 | Frontend              | React 19 + Vite                                                                 | ✅ Built — auth, dashboard, case detail, collection, OSINT views |
 | ML Framework          | PyTorch 2.x                                                                     | 🔲 Not started — stretch only                                    |
 | Graph ML              | PyTorch Geometric                                                               | 🔲 Not started — stretch only                                    |
@@ -173,14 +175,14 @@ POST   /api/cases/{case_id}/collect      { platform, username, limit? } → trig
 Each identifier in `identifiers[]` is one of:
 
 ```
-{ identifier_type: "username" | "email" | "phone" | "profile_url", value: "...", platform_hint?: "reddit"|"twitter" }
+{ identifier_type: "username" | "email" | "phone" | "profile_url", value: "...", platform_hint?: "reddit"|"twitter"|"github"|"instagram" }
 ```
 
-Identifier routing today: `username` identifiers can be collected (Reddit/Twitter) or run through Sherlock from the case detail screen; `email` identifiers can be run through breach lookup. `phone` and `profile_url` are stored but have no lookup source wired up yet.
+Identifier routing today: `username` identifiers can be collected (Reddit/Twitter/GitHub/Instagram) or run through Sherlock from the case detail screen; `email` identifiers can be run through breach lookup. `phone` and `profile_url` are stored but have no lookup source wired up yet.
 
 ### Frontend
 
-Built: `Login.jsx`, `Register.jsx`, `AuthContext.jsx` (session restore via `/api/auth/me`), `ProtectedRoute.jsx`, `CaseDashboard.jsx` (list + create), `NewCase.jsx` (multi-identifier form), `CaseDetail.jsx` (identifiers, add-identifier form, per-identifier Collect/Sherlock/breach-check actions, OSINT results display, collected account + post feed display).
+Built: `Login.jsx`, `Register.jsx`, `AuthContext.jsx` (session restore via `/api/auth/me`), `ProtectedRoute.jsx`, `CaseDashboard.jsx` (list + create), `NewCase.jsx` (multi-identifier form), `CaseDetail.jsx` (identifiers, add-identifier form, per-identifier Collect/Sherlock/breach-check actions, OSINT results display, collected account + post feed display, GitHub follower/following panel).
 
 ---
 
@@ -194,10 +196,12 @@ Layer 1 is the foundation. All other layers depend on data quality.
 ```
 backend/collector/
   __init__.py
-  base.py      collect() / collect_async() entrypoints, save_to_db()
-  models.py    AccountProfile / Post dataclasses, shared logger
-  reddit.py    RedditCollector waterfall (self-hosted Redlib → JSON API → public Redlib)
-  twitter.py   TwitterCollector (twikit + monkey patches)
+  base.py         collect() / collect_async() entrypoints, save_to_db()
+  models.py       AccountProfile / Post dataclasses, shared logger
+  reddit.py       RedditCollector waterfall (self-hosted Redlib → JSON API → public Redlib)
+  twitter.py      TwitterCollector (twikit + monkey patches)
+  github.py       GitHubCollector (REST API v3 — repos, events, follower/following lists)
+  instagram.py    InstagramCollector (instaloader, anonymous, public-only, no Stories)
 backend/osint.py            Sherlock username search + XposedOrNot/HIBP breach lookup
 backend/app.py              FastAPI app, CORS, router includes, legacy /collect/{platform}/{username}
 backend/routes_cases.py     Case CRUD + per-case /collect
@@ -210,37 +214,53 @@ backend/requirements.txt    Python dependencies
 
 The original monolithic `collector.py` has been split into the `collector/` package above, with a shared `AccountProfile`/`Post` schema in `models.py`. `ARIACollector.jsx` (the old standalone collector UI) has been retired — collection is now triggered from `CaseDetail.jsx`.
 
+Supported `platform` values across `SUPPORTED_PLATFORMS` (`collector/base.py`), `CollectRequest` (`routes_cases.py`), and the frontend platform selects: `"reddit"`, `"twitter"`, `"github"`, `"instagram"`.
+
 ### AccountProfile schema (shared contract between all layers)
 
 ```
-platform           str          "reddit" | "twitter"
+platform           str          "reddit" | "twitter" | "github" | "instagram"
 username           str
 display_name       str
 bio                str
 location           str
-profile_image_url  str          URL — 400×400 for Twitter, Redlib-proxied for Reddit
-created_utc        float|None   Unix epoch UTC
-posts              list[Post]   submissions + comments combined, sorted newest first
+profile_image_url  str          URL — 400×400 for Twitter, Redlib-proxied for Reddit, GitHub avatar, Instagram CDN URL
+created_utc        float|None   Unix epoch UTC — null for Instagram (not exposed publicly)
+posts              list[Post]   platform-specific items, sorted newest first
 subreddits         list[str]    Reddit only — derived from post/comment history
 karma              int|None     Reddit only
-follower_count     int|None     Twitter only
-following_count    int|None     Twitter only
+follower_count     int|None     Twitter, GitHub, Instagram
+following_count    int|None     Twitter, GitHub, Instagram
 ```
 
 ```
-Post.external_id        str    platform-native ID (t3_xxx / t1_xxx for Reddit, tweet ID for Twitter) — used for DB dedup
-Post.text                str    full text
+Post.external_id        str    platform-native ID (t3_xxx / t1_xxx for Reddit, tweet ID for Twitter,
+                                repo:id / event:id / network:... for GitHub, shortcode for Instagram)
+                                — used for DB dedup
+Post.text                str    full text (caption for Instagram)
 Post.timestamp           float  Unix epoch UTC
-Post.metadata.type       str    "submission" | "comment" | "tweet"
+Post.metadata.type       str    "submission" | "comment" | "tweet" | "repo" | "push" | "pr" | "issue" |
+                                "fork" | "star" | "create" | "release" | "event" | "network" |
+                                "post" | "reel" | "carousel"
 Post.metadata.subreddit  str    Reddit only
 Post.metadata.score      int    Reddit upvotes (submissions and comments)
-Post.metadata.url        str    permalink to the original post/comment/tweet
+Post.metadata.url        str    permalink to the original post/comment/tweet/repo/event/Instagram post
 Post.metadata.images     list   extracted image URLs
 Post.metadata.tweet_id   str    Twitter only
 Post.metadata.retweet_count   int  Twitter only
 Post.metadata.favorite_count  int  Twitter only
 Post.metadata.reply_count     int  Twitter only
 Post.metadata.lang       str    Twitter only
+Post.metadata.language   str    GitHub repos only — primary language
+Post.metadata.topics     list   GitHub repos only
+Post.metadata.stars      int    GitHub repos only
+Post.metadata.forks      int    GitHub repos only
+Post.metadata.logins     list   GitHub network posts only — follower/following usernames
+Post.metadata.direction  str    GitHub network posts only — "followers" | "following"
+Post.metadata.is_video         bool  Instagram only
+Post.metadata.like_count       int|None  Instagram only — null if hidden by poster
+Post.metadata.comment_count    int|None  Instagram only
+Post.metadata.video_view_count int|None  Instagram only — videos/reels only
 ```
 
 ### Reddit Collector — 3-source waterfall
@@ -273,6 +293,30 @@ Contains two monkey patches (documented in `backend/collector/twitter.py`) for u
 
 Collects: username, display name, bio, location, profile image URL (`_400x400`), creation date, follower/following counts, up to `limit` original tweets (retweets filtered), per-tweet metadata.
 
+### GitHub Collector
+
+Uses the **GitHub public REST API v3** (`backend/collector/github.py`) — no authentication required for public profiles, but rate-limited to 60 requests/hour per IP unless `GITHUB_TOKEN` is set in `.env` (raises the limit to 5,000/hour).
+
+Collects:
+- **Profile**: name, bio, location, avatar, follower/following counts, account creation date, public repo count
+- **Repos**: up to `limit // 2` most-recently-pushed public repos, each treated as a `"repo"`-type post (name, description, language, topics, stars, forks)
+- **Events**: up to 300 public events (pushes, PR opens, issue opens, comments, forks, stars, branch/tag creation, releases) — gives temporal signal for Layer 2 behavioral analysis
+- **Followers / Following**: up to 100 usernames each (`NETWORK_LIMIT`), stored as two synthetic `"network"`-type posts rather than individual rows, so they persist in the DB and are visible to Layer 2 without per-user account rows. Surfaced in the frontend via `NetworkPanel.jsx` (tabbed, searchable username grid below the profile card).
+
+If follower/following counts exceed the 100-username cap, the frontend shows a truncation note suggesting `GITHUB_TOKEN` to raise it (the 100-cap itself is a sane default to limit API calls, not a hard platform limit — each 100 usernames costs one paginated call).
+
+### Instagram Collector
+
+Uses **instaloader** in fully anonymous mode (`backend/collector/instagram.py`) — **no login, no session cookies, no Stories.** This is a deliberate, permanent scope decision rather than a missing feature:
+
+- **No login**: ARIA only reads what Instagram serves a logged-out visitor. Private profiles correctly fail with a clear error (`PrivateProfileNotFollowedException` → `ValueError`) rather than being bypassed, consistent with the public-data-only constraint in `CLAUDE.md`.
+- **No Stories**: Stories are never public on any platform under any tooling — they require an authenticated, following relationship and expire after 24h. There is no anonymous path to them, so they are out of scope permanently, not pending.
+- **Reels and carousel posts fold into the regular post stream** with a `metadata.type` tag (`"post"` | `"reel"` | `"carousel"`), mirroring how the Reddit collector tags submissions vs. comments rather than maintaining separate feeds. A video post in the main public feed is classified as a reel; `GraphSidecar` (carousel) posts expose every child image URL via `metadata.images`.
+- **Reliability**: anonymous scraping is the least reliable of the four collectors — there's no fallback tier the way Reddit has. Instagram can rate-limit (`TooManyRequestsException`) or start requiring login mid-pagination (`LoginRequiredException`); the collector catches both and returns whatever posts it gathered rather than failing the whole request, but a thin or empty result is possible. A delay between paginated requests (`INSTAGRAM_REQUEST_DELAY`, default 1.5s + random jitter) reduces — does not eliminate — the chance of being throttled.
+- Collects: username, display name, bio, avatar, follower/following counts, and posts (caption, timestamp, like/comment counts where the poster hasn't hidden them, media URLs). Account creation date and a structured location field are not exposed by Instagram's public surface, so they're left `null`/empty respectively.
+
+No credentials are required — there's nothing Instagram-specific to add to `.env` beyond the optional `INSTAGRAM_REQUEST_DELAY` tuning knob.
+
 ### OSINT Lookups (✅ Built)
 
 ```
@@ -298,6 +342,8 @@ cd backend
 pip install -r requirements.txt
 ```
 
+`requirements.txt` includes `instaloader` for the Instagram collector alongside the existing `httpx`, `twikit`, `sherlock-project`, etc.
+
 ### 2. Environment variables
 
 Create a `.env` file at the project root (used by `docker-compose.yml` and loaded via `python-dotenv` in the backend):
@@ -313,6 +359,12 @@ COOKIE_SECURE=false
 TWITTER_CT0=your_ct0_value_here
 TWITTER_AUTH_TOKEN=your_auth_token_here
 
+# GitHub (optional — raises rate limit from 60/hr to 5000/hr per IP)
+GITHUB_TOKEN=
+
+# Instagram (optional — tune anonymous request pacing; default is 1.5s + jitter)
+INSTAGRAM_REQUEST_DELAY=1.5
+
 # Optional — breach lookup defaults to XposedOrNot if unset
 HIBP_API_KEY=
 ```
@@ -326,6 +378,10 @@ To get Twitter cookies:
 ```
 
 Cookies expire after a few weeks. Re-extract from browser when collection starts returning auth errors.
+
+To get a GitHub token (optional, raises rate limit): create a fine-grained or classic personal access token at github.com/settings/tokens — no scopes are required for public-data reads, but GitHub still requires a token to grant the higher rate limit tier.
+
+Instagram requires no credentials at all — collection is fully anonymous.
 
 ### 3. Run with Docker Compose (recommended)
 
@@ -366,7 +422,7 @@ Set `VITE_API_URL` in `frontend/.env` to point at the backend (e.g. `http://loca
 
 ### Via the web app
 
-Register → log in → create a case with one or more identifiers → from the case detail screen, trigger **Collect** (Reddit/Twitter), **Sherlock** (username enumeration), or **Check Breaches** (email) per identifier. Results persist to the case and reload on refresh.
+Register → log in → create a case with one or more identifiers → from the case detail screen, trigger **Collect** (Reddit/Twitter/GitHub/Instagram), **Sherlock** (username enumeration), or **Check Breaches** (email) per identifier. Results persist to the case and reload on refresh.
 
 ### Python module (synchronous)
 
@@ -374,8 +430,10 @@ Register → log in → create a case with one or more identifiers → from the 
 from collector.base import collect, save_to_db
 import psycopg2
 
-reddit_profile  = collect("reddit", "spez", limit=10000)
-twitter_profile = collect("twitter", "jack", limit=100)
+reddit_profile    = collect("reddit", "spez", limit=10000)
+twitter_profile   = collect("twitter", "jack", limit=100)
+github_profile    = collect("github", "torvalds", limit=100)
+instagram_profile = collect("instagram", "natgeo", limit=50)
 
 print(reddit_profile.karma)
 print(reddit_profile.subreddits)
@@ -391,10 +449,10 @@ account_id = save_to_db(reddit_profile, conn, case_id=1)  # case_id is required
 ```python
 from collector.base import collect_async
 
-profile = await collect_async("reddit", "spez", limit=10000)
+profile = await collect_async("instagram", "natgeo", limit=50)
 ```
 
-Use `collect_async` when inside an already-running event loop. Reddit collection is offloaded to a thread via `run_in_executor` so it doesn't block FastAPI's event loop.
+Use `collect_async` when inside an already-running event loop. Reddit, GitHub, and Instagram collection are each offloaded to a thread via `run_in_executor` so they don't block FastAPI's event loop; Twitter (twikit) is natively async.
 
 ### REST API
 
@@ -442,9 +500,11 @@ content_analysis(id, account_id→accounts, top_keywords_json, hashtags_json,
                   sentiment_compound, tone_label, cross_post_fingerprint, created_at)
 ```
 
+`platform` has no DB-level CHECK constraint — any string is accepted, so adding a new collector (as with GitHub and Instagram) never requires a migration. The frontend and `CollectRequest` Pydantic model are what actually constrain which platforms can be triggered from the UI/API.
+
 `accounts` is **per-case**: the same real account collected for two different cases produces two rows. This avoids merge/dedup logic at the cost of re-collection if a suspect reappears — acceptable tradeoff for the hackathon timeline, documented as a known limitation.
 
-`posts.external_id` (platform-native ID) is the dedup key, not `(timestamp, text)` — this is more robust to edited posts and avoids false-duplicate collisions.
+`posts.external_id` (platform-native ID) is the dedup key, not `(timestamp, text)` — this is more robust to edited posts and avoids false-duplicate collisions. GitHub network posts use a synthetic ID (`network:followers:<username>`, `network:following:<username>`) since they aren't really individual posts.
 
 ---
 
@@ -466,11 +526,11 @@ features = extract(profile)
 
 ### 2.1 Profile Similarity Module (MVP)
 
-| Field    | Method                                                   | Library               | Weight |
-| -------- | -------------------------------------------------------- | --------------------- | ------ |
-| Username | Levenshtein + Jaro-Winkler + LCS                         | rapidfuzz             | 0.40   |
-| Bio      | Cosine similarity of sentence embeddings                 | sentence-transformers | 0.35   |
-| Temporal | 1 − Jensen-Shannon divergence of posting-hour histograms | scipy                 | 0.25   |
+| Field    | Method                                                    | Library                | Weight |
+| -------- | ---------------------------------------------------------- | ------------------------ | ------ |
+| Username | Levenshtein + Jaro-Winkler + LCS                          | rapidfuzz               | 0.40   |
+| Bio      | Cosine similarity of sentence embeddings                  | sentence-transformers   | 0.35   |
+| Temporal | 1 − Jensen-Shannon divergence of posting-hour histograms  | scipy                   | 0.25   |
 
 See **MVP Correlation Scoring Spec** above for the exact formula and output JSON shape.
 
@@ -490,7 +550,7 @@ GET /api/accounts/{id}/sentiment   sentiment score + tone label
 
 ### 2.3 Behaviour / Spike-Gap Module (MVP, new)
 
-Rolling 7-day post count per account; flag windows with 3σ deviation from baseline as activity spikes or gaps. Writes `spike_flag` on `posts` (column already exists in schema).
+Rolling 7-day post count per account; flag windows with 3σ deviation from baseline as activity spikes or gaps. Writes `spike_flag` on `posts` (column already exists in schema). GitHub's event stream and Instagram's post timestamps both feed this the same way Reddit/Twitter posts do — no platform-specific logic needed here.
 
 Planned endpoints:
 
@@ -501,15 +561,15 @@ GET /api/cases/{case_id}/timeline     merged timeline across all linked accounts
 
 ### 2.4 Stylometric Module (STRETCH)
 
-Siamese network on post text. Features: vocabulary richness, sentence length distribution, punctuation patterns, function word frequency, POS tag ratios. Train on PAN 2020 via Colab/Kaggle T4, target AUC > 0.75. **Fallback if not trained in time:** TF-IDF cosine similarity as the stylometric score.
+Siamese network on post text. Features: vocabulary richness, sentence length distribution, punctuation patterns, function word frequency, POS tag ratios. Train on PAN 2020 via Colab/Kaggle T4, target AUC > 0.75. **Fallback if not trained in time:** TF-IDF cosine similarity as the stylometric score. Note: Instagram captions tend to be short relative to Reddit/Twitter text, which may weaken this signal for Instagram accounts specifically — worth flagging in the Layer 5 evidence notes if it becomes relevant.
 
 ### 2.5 Image Module (STRETCH)
 
-CLIP embeddings for profile images + BLIP captions. Frozen pretrained models — do NOT retrain. If not built, image signal is omitted and weights renormalize (see MVP spec).
+CLIP embeddings for profile images + BLIP captions. Frozen pretrained models — do NOT retrain. If not built, image signal is omitted and weights renormalize (see MVP spec). Instagram and Reddit both supply rich `metadata.images` arrays on individual posts (not just profile images) that could extend this beyond just avatar comparison, if time allows.
 
 ### 2.6 Graph Intelligence Module (STRETCH — Layer 4)
 
-GAT on follower/following social graph (Foursquare-Twitter dataset, 496-node subset, trained once and checkpointed — never retrained during demo). Node embeddings feed back into fusion as a 6th feature.
+GAT on follower/following social graph (Foursquare-Twitter dataset, 496-node subset, trained once and checkpointed — never retrained during demo). Node embeddings feed back into fusion as a 6th feature. GitHub's collected follower/following username lists (`NetworkPanel.jsx` data) are a natural real-data substitute for the Foursquare-Twitter dataset if there's time to wire it in — Instagram and Twitter's friend graphs aren't collected at this depth currently.
 
 ---
 
@@ -547,7 +607,7 @@ Aggregates all layer outputs into a suspect profile and generates an exportable 
 
 - Suspect profile: aggregated bio, all linked accounts with confidence, top keywords, sentiment summary, posting behaviour summary, network cluster summary (if Layer 4 built)
 - Report sections: case metadata, seed identifiers, discovered accounts, correlation logic per link, evidence breakdown, open-source references, confidence notes, limitations disclaimer
-- Confidence note auto-added if any signal is missing (e.g. "Image score unavailable — excluded, weights renormalized")
+- Confidence note auto-added if any signal is missing (e.g. "Image score unavailable — excluded, weights renormalized") — should also surface platform-specific caveats, e.g. "Instagram collection used anonymous access; result set may be incomplete" when relevant
 
 Planned endpoints:
 
@@ -563,11 +623,11 @@ GET /api/cases/{case_id}/report/pdf   report as PDF (WeasyPrint)
 ## Frontend — Screens
 
 | #   | Screen                                                                    | Status         |
-| --- | ------------------------------------------------------------------------- | -------------- |
+| --- | ---------------------------------------------------------------------------| -------------- |
 | 1   | Login / Register                                                          | ✅ Built       |
 | 2   | Case Dashboard                                                            | ✅ Built       |
 | 3   | New Case / Input (multi-identifier)                                       | ✅ Built       |
-| 4   | Case Detail (identifiers, collect, OSINT, collected accounts + post feed) | ✅ Built       |
+| 4   | Case Detail (identifiers, collect, OSINT, collected accounts + post feed, GitHub network panel) | ✅ Built |
 | 5   | Processing Screen (7-layer progress)                                      | 🔲 Not started |
 | 6   | Results Screen (ranked candidates)                                        | 🔲 Not started |
 | 7   | Evidence Panel (score breakdown, keywords, tone, hashtags)                | 🔲 Not started |
@@ -576,6 +636,8 @@ GET /api/cases/{case_id}/report/pdf   report as PDF (WeasyPrint)
 | 10  | Report Export Screen                                                      | 🔲 Not started |
 
 Screens 1–4 cover everything Layer 0 and Layer 1 currently support. Screens 5–10 depend on Layers 2–6 and haven't been started. The old standalone `ARIACollector.jsx` (mock-data demo mode, typewriter log effect) has been removed in favor of the integrated `CaseDetail.jsx` flow — there is currently no mock-data fallback UI; if the backend is unreachable, requests simply fail and surface an error banner.
+
+`NetworkPanel.jsx` is GitHub-specific (renders the two synthetic follower/following posts as a tabbed, searchable username grid) and only mounts when `acc.platform === "github"`. Instagram doesn't currently collect a follower/following username list (only counts), so it has no equivalent panel.
 
 ---
 
@@ -601,18 +663,26 @@ Screens 1–4 cover everything Layer 0 and Layer 1 currently support. Screens 5�
 
 10. **Sherlock/breach lookups should be pre-run before demo** — results are stored in `osint_lookups`; prefer demoing from stored results rather than live calls (rate limits / latency risk), especially for Sherlock's 400+ site sweep.
 
-11. **No mock-data fallback exists anymore** — the old `frontend/src/lib/mockData.js` generator is unused dead code since `ARIACollector.jsx` was retired. Either wire it into `CaseDetail.jsx` as an explicit "demo mode" fallback (with a visible banner, as previously planned) or remove it.
+11. **No mock-data fallback exists anymore** — the old `frontend/src/lib/mockData.js` generator is unused dead code since `ARIACollector.jsx` was retired. Either wire it into `CaseDetail.jsx` as an explicit "demo mode" fallback (with a visible banner, as previously planned) or remove it. It currently only knows Reddit/Twitter shapes anyway — would need GitHub/Instagram sample data added if revived.
 
 12. **Redis is in the tech-stack table but not in `docker-compose.yml`** — no caching/rate-limiting/job-queue service is actually running. Add the service if Layer 2/3 background jobs need it.
+
+13. **GitHub unauthenticated rate limit is low** — 60 requests/hour per IP without `GITHUB_TOKEN`, and each page of 100 followers/following costs one call on top of the profile/repo/event calls. A profile with many followers collected without a token will exhaust the limit quickly. Set `GITHUB_TOKEN` before any demo involving GitHub collection, and don't re-collect the same account repeatedly while testing.
+
+14. **Instagram collection is the least reliable of the four collectors** — anonymous-only scraping has no fallback tier the way Reddit's waterfall does. Instagram may rate-limit (`TooManyRequestsException`) or demand login mid-pagination (`LoginRequiredException`); the collector returns a partial result rather than erroring out completely, but a thin or empty post list is a real possibility, especially for high-follower accounts. Pre-run and cache Instagram collection before a demo rather than relying on it live — same guidance as Sherlock/breach lookups.
+
+15. **Instagram Stories are permanently out of scope, not a future item** — Stories require an authenticated, following relationship with the target and expire in 24h; there is no anonymous, public path to them under any tooling. Building Stories collection would mean operating a logged-in session against a target's privacy boundary, which conflicts with the public-data-only constraint in `CLAUDE.md`. Don't pick this up as a "nice to have" without first reopening that constraint with the team.
+
+16. **`platform` has no DB CHECK constraint** — unlike `case_identifiers.identifier_type` or `osint_lookups.lookup_type`, the `accounts.platform` column accepts any string. This is why GitHub and Instagram needed no migration to add, but also means a typo'd platform string (e.g. `"instagran"`) would silently create a new, separate platform bucket rather than erroring. Worth adding a CHECK constraint once the platform list stabilizes.
 
 ---
 
 ## Project Status
 
 | Layer                                                                            | Status                | Owner        |
-| -------------------------------------------------------------------------------- | --------------------- | ------------ |
+| ----------------------------------------------------------------------------------| ------------------------| --------------|
 | 0 — Auth + Case Management                                                       | ✅ Built              | Backend      |
-| 1 — Data Collection (incl. OSINT lookups)                                        | ✅ Built, case-scoped | Backend      |
+| 1 — Data Collection (Reddit, Twitter, GitHub, Instagram, incl. OSINT lookups)    | ✅ Built, case-scoped | Backend      |
 | 2 — Feature Extraction (MVP: profile/content/behaviour)                          | 🔲 Not started        | ML + Backend |
 | 2 — Feature Extraction (stretch: stylometry, image)                              | 🔲 Not started        | ML           |
 | 3 — Correlation Engine                                                           | 🔲 Not started        | ML + Backend |
@@ -622,5 +692,4 @@ Screens 1–4 cover everything Layer 0 and Layer 1 currently support. Screens 5�
 | Frontend — Screens 1–4 (auth, dashboard, new case, case detail)                  | ✅ Built              | Frontend     |
 | Frontend — Screens 5–10 (processing, results, evidence, graph, timeline, report) | 🔲 Not started        | Frontend     |
 
-**Build schedule**: Phase 1 (Foundation, Jun 12–17) — done → Phase 2 (ML/Correlation Core, Jun 18–24) — in progress → Phase 3 (Frontend + Viz, Jun 25–Jul 1) → Phase 4 (Polish + Demo Prep, Jul 2–3).
-
+**Build schedule**: Phase 1 (Foundation) — done → Phase 2 (ML/Correlation Core, collectors expanded with GitHub + Instagram) — in progress → Phase 3 (Frontend + Viz) → Phase 4 (Polish + Demo Prep).

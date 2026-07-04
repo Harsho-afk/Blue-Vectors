@@ -30,7 +30,7 @@ class CaseCreate(BaseModel):
 
 
 class CollectRequest(BaseModel):
-    platform: Literal["reddit", "twitter", "github"]
+    platform: Literal["reddit", "twitter", "github", "instagram"]
     username: str
     limit: int = Field(default=50, ge=1, le=500)
 

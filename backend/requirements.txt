@@ -9,3 +9,4 @@ python-jose[cryptography]
 psycopg2-binary
 email-validator
 sherlock-project
+instaloader

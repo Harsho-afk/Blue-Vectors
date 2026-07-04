@@ -1658,3 +1658,27 @@ body {
   padding-top: 10px;
   border-top: 1px solid #1E2229;
 }
+
+/* ── Instagram additions ──────────────────────────────────────────────── */
+
+.platform-badge--instagram {
+  color: #E1306C;
+  border-color: #E1306C33;
+  background: #E1306C15;
+}
+
+.profile-card--instagram { border-left-color: #E1306C; }
+
+.osint-btn--instagram {
+  background: #E1306C15;
+  color: #E1306C;
+  border-color: #E1306C33;
+}
+.osint-btn--instagram:hover:not(:disabled) {
+  background: #E1306C25;
+  border-color: #E1306C;
+}
+
+.post-row__type--post     { color: #E1306C; border-color: #E1306C33; background: #E1306C12; }
+.post-row__type--reel     { color: #A78BFA; border-color: #A78BFA33; background: #A78BFA12; }
+.post-row__type--carousel { color: #F6C90E; border-color: #F6C90E33; background: #F6C90E12; }

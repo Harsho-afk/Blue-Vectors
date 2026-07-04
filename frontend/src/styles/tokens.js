@@ -18,6 +18,7 @@ export const C = {
   reddit:    "#FF4500",
   twitter:   "#1D9BF0",
   github:    "#E8EFF5",
+  instagram: "#E1306C",
 };
 
 export const FONT = {

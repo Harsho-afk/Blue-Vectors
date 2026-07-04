@@ -22,6 +22,7 @@ export default function ProfileCard({ profile }) {
 
   const handle = profile.platform === "twitter" ? `@${profile.username}`
                 : profile.platform === "github" ? `github.com/${profile.username}`
+                : profile.platform === "instagram" ? `@${profile.username}`
                 : `u/${profile.username}`;
   const palette = AVATAR_PALETTES[usernameHash(profile.username) % AVATAR_PALETTES.length];
 
