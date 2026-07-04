@@ -386,62 +386,36 @@ async def _hibp_lookup(email: str) -> BreachLookupResult:
 # DB persistence helpers
 # ──────────────────────────────────────────────
 
-def save_username_search(conn, case_id: int, result: UsernameSearchResult, db_type: str = "sqlite") -> int:
+def save_username_search(conn, case_id: int, result: UsernameSearchResult) -> int:
     """Save username search results to osint_lookups table."""
     cur = conn.cursor()
     result_json = json.dumps(result.to_dict(), ensure_ascii=False)
-
-    if db_type == "sqlite":
-        cur.execute(
-            """
-            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-            VALUES (?, 'sherlock', ?, ?)
-            """,
-            (case_id, result.username, result_json),
-        )
-        conn.commit()
-        cur.execute("SELECT last_insert_rowid()")
-        return cur.fetchone()[0]
-    else:
-        cur.execute(
-            """
-            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-            VALUES (%s, 'sherlock', %s, %s)
-            RETURNING id
-            """,
-            (case_id, result.username, result_json),
-        )
-        conn.commit()
-        return cur.fetchone()[0]
+    cur.execute(
+        """
+        INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+        VALUES (%s, 'sherlock', %s, %s)
+        RETURNING id
+        """,
+        (case_id, result.username, result_json),
+    )
+    conn.commit()
+    return cur.fetchone()[0]
 
 
-def save_breach_lookup(conn, case_id: int, result: BreachLookupResult, db_type: str = "sqlite") -> int:
+def save_breach_lookup(conn, case_id: int, result: BreachLookupResult) -> int:
     """Save breach lookup results to osint_lookups table."""
     cur = conn.cursor()
     result_json = json.dumps(result.to_dict(), ensure_ascii=False)
-
-    if db_type == "sqlite":
-        cur.execute(
-            """
-            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-            VALUES (?, 'hibp', ?, ?)
-            """,
-            (case_id, result.email, result_json),
-        )
-        conn.commit()
-        cur.execute("SELECT last_insert_rowid()")
-        return cur.fetchone()[0]
-    else:
-        cur.execute(
-            """
-            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-            VALUES (%s, 'hibp', %s, %s)
-            RETURNING id
-            """,
-            (case_id, result.email, result_json),
-        )
-        conn.commit()
-        return cur.fetchone()[0]
+    cur.execute(
+        """
+        INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+        VALUES (%s, 'hibp', %s, %s)
+        RETURNING id
+        """,
+        (case_id, result.email, result_json),
+    )
+    conn.commit()
+    return cur.fetchone()[0]
 
 
 # ──────────────────────────────────────────────
