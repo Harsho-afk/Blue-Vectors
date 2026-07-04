@@ -7,23 +7,18 @@ DELETE /api/cases/{case_id}               delete case + cascade
 POST   /api/cases/{case_id}/identifiers   add identifier(s) to existing case
 POST   /api/cases/{case_id}/collect       collect data for a case identifier
 """
-
 import json
 from typing import Optional, Literal
 from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-
 from auth import get_current_user, get_db_conn
-from collector import collect_async
+from collector.base import collect_async
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 
 # ── Pydantic Models ───────────────────────────────────────────────────────────
-
-
 class IdentifierIn(BaseModel):
     identifier_type: Literal["username", "email", "phone", "profile_url"]
     value: str
@@ -89,9 +84,7 @@ class CaseDetailResponse(BaseModel):
 
 
 # ── Helper: Ownership check ───────────────────────────────────────────────────
-
-
-def _get_case_owner(conn, case_id: int) -> Optional[int]:
+def get_case_owner(conn, case_id: int) -> Optional[int]:
     """Return investigator_id if case exists, else None."""
     cur = conn.cursor()
     cur.execute(
@@ -102,9 +95,9 @@ def _get_case_owner(conn, case_id: int) -> Optional[int]:
     return row["investigator_id"] if row else None
 
 
-def _check_case_ownership(conn, case_id: int, user_id: int):
+def check_case_ownership(conn, case_id: int, user_id: int):
     """Raise 404 if case doesn't exist or 403 if user doesn't own it."""
-    owner_id = _get_case_owner(conn, case_id)
+    owner_id = get_case_owner(conn, case_id)
     if owner_id is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Case not found"
@@ -212,7 +205,7 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
     conn = get_db_conn()
     try:
         # Check ownership
-        _check_case_ownership(conn, case_id, current_user["id"])
+        check_case_ownership(conn, case_id, current_user["id"])
 
         cur = conn.cursor()
 
@@ -328,7 +321,8 @@ def delete_case(case_id: int, current_user: dict = Depends(get_current_user)):
     conn = get_db_conn()
     try:
         # Check ownership
-        _check_case_ownership(conn, case_id, current_user["id"])
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
         cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
         conn.commit()
     finally:
@@ -347,7 +341,7 @@ def add_identifiers(
 
     conn = get_db_conn()
     try:
-        _check_case_ownership(conn, case_id, current_user["id"])
+        check_case_ownership(conn, case_id, current_user["id"])
         cur = conn.cursor()
         for ident in body:
             cur.execute(
@@ -373,7 +367,7 @@ async def collect_for_case(
     """
     conn = get_db_conn()
     try:
-        _check_case_ownership(conn, case_id, current_user["id"])
+        check_case_ownership(conn, case_id, current_user["id"])
     finally:
         conn.close()
 
@@ -428,11 +422,19 @@ async def collect_for_case(
             ).isoformat()
             cur.execute(
                 """
-                INSERT INTO posts (account_id, text, timestamp, metadata)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT DO NOTHING
+                INSERT INTO posts
+                (account_id, external_id, text, timestamp, metadata)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (account_id, external_id)
+                DO NOTHING
                 """,
-                (account_id, post.text, post_dt, json.dumps(post.metadata)),
+                (
+                    account_id,
+                    post.external_id,
+                    post.text,
+                    post_dt,
+                    json.dumps(post.metadata),
+                )
             )
 
         conn.commit()

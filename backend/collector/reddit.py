@@ -1,154 +1,14 @@
-"""
-ARIA — Layer 1: Data Collection
-
-Reddit collection priority:
-  1. Reddit JSON API  (/user/<u>/about.json, submitted.json, comments.json)
-  2. Self-hosted Redlib  (http://aria-redlib:8080)
-  3. Public Redlib instances
-  4. old.reddit.com
-
-Twitter: twikit (browser cookies — ct0 + auth_token from DevTools)
-
-.env file:
-    TWITTER_CT0=...
-    TWITTER_AUTH_TOKEN=...
-
-Install:
-    pip install httpx beautifulsoup4 twikit psycopg2-binary python-dotenv
-"""
-
-import os
-import re as _re
-import json
-import asyncio
-import logging
-from datetime import datetime, timezone
-from typing import Optional
-from dataclasses import dataclass, field, asdict
-from urllib.parse import urlparse, parse_qs, urlencode
-
-import httpx
-from bs4 import BeautifulSoup
-from twikit import Client as TwikitClient
-from twikit.errors import UserNotFound, UserUnavailable
 from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qs, urlencode
+import httpx
+import os
+from .models import AccountProfile, Post, log
+from bs4 import BeautifulSoup
+from datetime import datetime, timezone
 
 load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
-log = logging.getLogger("aria.collector")
-
-
-# ──────────────────────────────────────────────
-# MONKEY PATCH 1: twikit ClientTransaction broken since March 2026
-# Twitter changed ondemand.s.js structure — regex no longer matches.
-# Remove this block once twikit publishes a fix.
-# ──────────────────────────────────────────────
-_tx_mod = __import__(
-    "twikit.x_client_transaction.transaction", fromlist=["ClientTransaction"]
-)
-_tx_mod.ON_DEMAND_FILE_REGEX = _re.compile(
-    r',(\d+):["\']ondemand\.s["\']', flags=(_re.VERBOSE | _re.MULTILINE)
-)
-_tx_mod.ON_DEMAND_HASH_PATTERN = r',{}:"([0-9a-f]+)"'
-if not hasattr(_tx_mod, "INDICES_REGEX"):
-    _tx_mod.INDICES_REGEX = _re.compile(r'"(\d+)",(\d+)')
-
-
-async def _patched_get_indices(self, home_page_response, session, headers):
-    key_byte_indices = []
-    response = self.validate_response(home_page_response) or self.home_page_response
-    on_demand_file_index = _tx_mod.ON_DEMAND_FILE_REGEX.search(str(response)).group(1)
-    regex = _re.compile(_tx_mod.ON_DEMAND_HASH_PATTERN.format(on_demand_file_index))
-    filename = regex.search(str(response)).group(1)
-    on_demand_file_url = (
-        f"https://abs.twimg.com/responsive-web/client-web/ondemand.s.{filename}a.js"
-    )
-    on_demand_file_response = await session.request(
-        method="GET", url=on_demand_file_url, headers=headers
-    )
-    key_byte_indices_match = _tx_mod.INDICES_REGEX.finditer(
-        str(on_demand_file_response.text)
-    )
-    for item in key_byte_indices_match:
-        key_byte_indices.append(item.group(2))
-    if not key_byte_indices:
-        raise Exception("Couldn't get KEY_BYTE indices")
-    return int(key_byte_indices[0]), list(map(int, key_byte_indices[1:]))
-
-
-_tx_mod.ClientTransaction.get_indices = _patched_get_indices
-# END MONKEY PATCH 1
-
-
-# ──────────────────────────────────────────────
-# MONKEY PATCH 2: twikit User.__init__ crashes when bio has no URLs
-# ──────────────────────────────────────────────
-from twikit.user import User as _TwikitUser
-
-_original_user_init = _TwikitUser.__init__
-
-
-def _patched_user_init(self, client, data):
-    legacy = data.get("legacy", data)
-    entities = legacy.setdefault("entities", {})
-    description = entities.setdefault("description", {})
-    description.setdefault("urls", [])
-    legacy.setdefault("withheld_in_countries", [])
-    legacy.setdefault("withheld_scope", None)
-    _original_user_init(self, client, data)
-
-
-_TwikitUser.__init__ = _patched_user_init
-# END MONKEY PATCH 2
-
-
-# ──────────────────────────────────────────────
-# Data schemas
-# ──────────────────────────────────────────────
-
-
-@dataclass
-class Post:
-    text: str
-    timestamp: float  # Unix epoch (UTC)
-    metadata: dict = field(default_factory=dict)
-
-
-@dataclass
-class AccountProfile:
-    platform: str  # "reddit" | "twitter"
-    username: str
-    display_name: str
-    bio: str
-    location: str
-    profile_image_url: str
-    created_utc: Optional[float]
-    posts: list = field(default_factory=list)  # list[Post]
-    subreddits: list = field(default_factory=list)  # Reddit only
-    karma: Optional[int] = None  # Reddit only
-    follower_count: Optional[int] = None  # Twitter only
-    following_count: Optional[int] = None  # Twitter only
-
-    def to_dict(self) -> dict:
-        """Serialize to a plain dict — safe for JSON and PostgreSQL JSONB."""
-        return asdict(self)
-
-
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-
-
-def _twitter_ts_to_epoch(ts_str: str) -> float:
-    dt = datetime.strptime(ts_str, "%a %b %d %H:%M:%S %z %Y")
-    return dt.timestamp()
-
-
-_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-_IMAGE_HOSTS = ("i.redd.it", "preview.redd.it", "i.imgur.com", "imgur.com")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+IMAGE_HOSTS = ("i.redd.it", "preview.redd.it", "i.imgur.com", "imgur.com")
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -165,9 +25,9 @@ JSON_HEADERS = {
 }
 
 # Self-hosted Redlib (Docker service name)
-_SELF_HOSTED_REDLIB = os.environ.get("REDLIB_URL", "http://aria-redlib:8080")
+SELF_HOSTED_REDLIB = os.environ.get("REDLIB_URL", "http://aria-redlib:8080")
 
-_PUBLIC_REDLIB_INSTANCES = [
+PUBLIC_REDLIB_INSTANCES = [
     "https://redlib.privacyredirect.com",
     "https://redlib.lunar.icu",
     "https://redlib.catsarch.com",
@@ -184,7 +44,7 @@ _PUBLIC_REDLIB_INSTANCES = [
 ]
 
 
-def _is_bot_challenge(text: str) -> bool:
+def is_bot_challenge(text: str) -> bool:
     low = text[:2000].lower()
     return (
         "just a moment" in low
@@ -194,7 +54,7 @@ def _is_bot_challenge(text: str) -> bool:
     )
 
 
-def _extract_image_urls(md_el) -> list:
+def extract_image_urls(md_el) -> list:
     """Extract and remove image links from a BeautifulSoup .md element."""
     if not md_el:
         return []
@@ -205,9 +65,9 @@ def _extract_image_urls(md_el) -> list:
         if not href:
             continue
         is_image_ext = any(
-            href.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS
+            href.split("?")[0].lower().endswith(ext) for ext in IMAGE_EXTENSIONS
         )
-        is_image_host = any(host in href for host in _IMAGE_HOSTS)
+        is_image_host = any(host in href for host in IMAGE_HOSTS)
         if is_image_ext or is_image_host:
             if not href.startswith("http"):
                 href = "https:" + href if href.startswith("//") else "https://" + href
@@ -218,7 +78,7 @@ def _extract_image_urls(md_el) -> list:
     return urls
 
 
-def _get_thumbnail(thing_el) -> str:
+def get_thumbnail(thing_el) -> str:
     img = thing_el.select_one("a.thumbnail img")
     if not img:
         return ""
@@ -228,11 +88,7 @@ def _get_thumbnail(thing_el) -> str:
     return src
 
 
-# ──────────────────────────────────────────────
 # SOURCE 1: Reddit JSON API
-# ──────────────────────────────────────────────
-
-
 class RedditJSONCollector:
     """
     Collects Reddit data via the public JSON API.
@@ -243,28 +99,34 @@ class RedditJSONCollector:
     BASE = "https://www.reddit.com"
     TIMEOUT = 12
 
-    def _get(self, path: str, params: dict = None) -> dict:
+    def get(self, path: str, params: dict = None) -> dict:
         url = f"{self.BASE}{path}"
         if params:
             url += "?" + urlencode(params)
-        r = httpx.get(url, headers=JSON_HEADERS, timeout=self.TIMEOUT, follow_redirects=True)
+        r = httpx.get(
+            url, headers=JSON_HEADERS, timeout=self.TIMEOUT, follow_redirects=True
+        )
         if r.status_code == 404:
             raise ValueError(f"Reddit JSON API: user not found at {path}")
         if r.status_code == 403:
-            raise ValueError(f"Reddit JSON API: forbidden (private/suspended) at {path}")
+            raise ValueError(
+                f"Reddit JSON API: forbidden (private/suspended) at {path}"
+            )
         if r.status_code == 429:
             raise ValueError("Reddit JSON API: rate limited")
         if r.status_code != 200:
             raise ValueError(f"Reddit JSON API: HTTP {r.status_code} at {path}")
         return r.json()
 
-    def _fetch_about(self, username: str) -> dict:
-        data = self._get(f"/user/{username}/about.json")
+    def fetch_about(self, username: str) -> dict:
+        data = self.get(f"/user/{username}/about.json")
         if data.get("kind") != "t2":
-            raise ValueError(f"Reddit JSON API: unexpected about.json shape for u/{username}")
+            raise ValueError(
+                f"Reddit JSON API: unexpected about.json shape for u/{username}"
+            )
         return data["data"]
 
-    def _fetch_listings(self, username: str, endpoint: str, limit: int) -> list:
+    def fetch_listings(self, username: str, endpoint: str, limit: int) -> list:
         """
         Paginate through /user/<u>/<endpoint>.json and return raw 'children' dicts.
         endpoint: 'submitted' | 'comments'
@@ -279,7 +141,7 @@ class RedditJSONCollector:
                 params["after"] = after
 
             try:
-                data = self._get(f"/user/{username}/{endpoint}.json", params)
+                data = self.get(f"/user/{username}/{endpoint}.json", params)
             except ValueError:
                 break
 
@@ -299,7 +161,7 @@ class RedditJSONCollector:
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
         log.info("Reddit [1/4 JSON API]: collecting u/%s (limit=%d)", username, limit)
 
-        about = self._fetch_about(username)
+        about = self.fetch_about(username)
 
         display_name = about.get("name", username)
         bio = about.get("subreddit", {}).get("public_description", "") or ""
@@ -312,15 +174,15 @@ class RedditJSONCollector:
             avatar = avatar.split("?")[0]
 
         # Collect submissions
-        sub_children = self._fetch_listings(username, "submitted", limit)
-        sub_posts, subreddits = self._parse_submission_children(sub_children)
+        sub_children = self.fetch_listings(username, "submitted", limit)
+        sub_posts, subreddits = self.parse_submission_children(sub_children)
         log.info(
             "Reddit [JSON API]: u/%s — %d submissions fetched", username, len(sub_posts)
         )
 
         # Collect comments
-        com_children = self._fetch_listings(username, "comments", limit)
-        com_posts, com_subs = self._parse_comment_children(com_children)
+        com_children = self.fetch_listings(username, "comments", limit)
+        com_posts, com_subs = self.parse_comment_children(com_children)
         subreddits |= com_subs
         log.info(
             "Reddit [JSON API]: u/%s — %d comments fetched", username, len(com_posts)
@@ -349,7 +211,7 @@ class RedditJSONCollector:
             karma=karma,
         )
 
-    def _parse_submission_children(self, children: list) -> tuple:
+    def parse_submission_children(self, children: list) -> tuple:
         posts = []
         subreddits = set()
         for child in children:
@@ -372,7 +234,7 @@ class RedditJSONCollector:
             images = []
             url = d.get("url", "")
             if url and any(
-                url.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS
+                url.split("?")[0].lower().endswith(ext) for ext in IMAGE_EXTENSIONS
             ):
                 images.append(url)
             preview = d.get("preview", {})
@@ -396,6 +258,7 @@ class RedditJSONCollector:
 
             posts.append(
                 Post(
+                    external_id=f"t3_{d['id']}",
                     text=text,
                     timestamp=float(d.get("created_utc", 0)),
                     metadata={
@@ -409,7 +272,7 @@ class RedditJSONCollector:
             )
         return posts, subreddits
 
-    def _parse_comment_children(self, children: list) -> tuple:
+    def parse_comment_children(self, children: list) -> tuple:
         posts = []
         subreddits = set()
         for child in children:
@@ -431,6 +294,7 @@ class RedditJSONCollector:
 
             posts.append(
                 Post(
+                    external_id=f"t1_{d['id']}",
                     text=body,
                     timestamp=float(d.get("created_utc", 0)),
                     metadata={
@@ -445,11 +309,7 @@ class RedditJSONCollector:
         return posts, subreddits
 
 
-# ──────────────────────────────────────────────
 # SOURCE 2 & 3: Redlib HTML (self-hosted + public)
-# ──────────────────────────────────────────────
-
-
 class RedlibCollector:
     """
     Collects Reddit data by scraping a Redlib instance (HTML).
@@ -460,7 +320,7 @@ class RedlibCollector:
         self.base = base_url.rstrip("/")
         self.label = label  # for logging
 
-    def _fetch(self, path: str) -> httpx.Response:
+    def fetch(self, path: str) -> httpx.Response:
         r = httpx.get(
             f"{self.base}{path}",
             headers=BROWSER_HEADERS,
@@ -468,17 +328,13 @@ class RedlibCollector:
             follow_redirects=True,
         )
         if r.status_code != 200:
-            raise ValueError(
-                f"Redlib [{self.label}]: HTTP {r.status_code} for {path}"
-            )
+            raise ValueError(f"Redlib [{self.label}]: HTTP {r.status_code} for {path}")
         if len(r.text) < 3000:
             raise ValueError(
                 f"Redlib [{self.label}]: response too short for {path} — likely down"
             )
-        if _is_bot_challenge(r.text):
-            raise ValueError(
-                f"Redlib [{self.label}]: anti-bot challenge for {path}"
-            )
+        if is_bot_challenge(r.text):
+            raise ValueError(f"Redlib [{self.label}]: anti-bot challenge for {path}")
         return r
 
     def probe(self) -> bool:
@@ -490,23 +346,25 @@ class RedlibCollector:
                 timeout=5,
                 follow_redirects=True,
             )
-            return r.status_code == 200 and not _is_bot_challenge(r.text)
+            return r.status_code == 200 and not is_bot_challenge(r.text)
         except Exception:
             return False
 
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
         log.info(
             "Reddit [Redlib/%s]: collecting u/%s (limit=%d)",
-            self.label, username, limit,
+            self.label,
+            username,
+            limit,
         )
 
-        profile_r = self._fetch(f"/user/{username}")
+        profile_r = self.fetch(f"/user/{username}")
         soup = BeautifulSoup(profile_r.text, "html.parser")
 
-        display_name, bio, karma, created_utc, avatar = self._parse_profile(soup)
+        display_name, bio, karma, created_utc, avatar = self.parse_profile(soup)
 
-        sub_posts, sub_subs = self._parse_submissions(username, limit)
-        com_posts, com_subs = self._parse_comments(username, limit)
+        sub_posts, sub_subs = self.parse_submissions(username, limit)
+        com_posts, com_subs = self.parse_comments(username, limit)
 
         all_posts = sub_posts + com_posts
         all_posts.sort(key=lambda p: p.timestamp, reverse=True)
@@ -514,7 +372,10 @@ class RedlibCollector:
 
         log.info(
             "Reddit [Redlib/%s] ✓: u/%s — %d total posts, %d subreddits",
-            self.label, username, len(all_posts), len(all_subs),
+            self.label,
+            username,
+            len(all_posts),
+            len(all_subs),
         )
 
         return AccountProfile(
@@ -530,14 +391,16 @@ class RedlibCollector:
             karma=karma,
         )
 
-    def _parse_profile(self, soup) -> tuple:
+    def parse_profile(self, soup) -> tuple:
         display_name, bio, karma, created_utc, avatar = "", "", None, None, ""
 
         name_el = soup.select_one("#user_title") or soup.select_one("#user > header h1")
         if name_el:
             display_name = name_el.text.strip().lstrip("u/").strip()
 
-        bio_el = soup.select_one("#user_description") or soup.select_one("p.description")
+        bio_el = soup.select_one("#user_description") or soup.select_one(
+            "p.description"
+        )
         if bio_el:
             bio = bio_el.text.strip()
 
@@ -572,17 +435,19 @@ class RedlibCollector:
 
         return display_name, bio, karma, created_utc, avatar
 
-    def _parse_submissions(self, username: str, limit: int) -> tuple:
+    def parse_submissions(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         while fetched < limit:
             path = f"/user/{username}/submitted"
             if after:
                 path += f"?after={after}"
             try:
-                r = self._fetch(path)
+                r = self.fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
-                log.warning("Redlib [%s]: submissions page failed — %s", self.label, exc)
+                log.warning(
+                    "Redlib [%s]: submissions page failed — %s", self.label, exc
+                )
                 break
             items = soup.select(".post")
             if not items:
@@ -638,6 +503,7 @@ class RedlibCollector:
 
                 posts.append(
                     Post(
+                        external_id=f"submission:{url or ts}",
                         text=text,
                         timestamp=ts,
                         metadata={
@@ -661,14 +527,14 @@ class RedlibCollector:
                 break
         return posts, subreddits
 
-    def _parse_comments(self, username: str, limit: int) -> tuple:
+    def parse_comments(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         while fetched < limit:
             path = f"/user/{username}/comments"
             if after:
                 path += f"?after={after}"
             try:
-                r = self._fetch(path)
+                r = self.fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
                 log.warning("Redlib [%s]: comments page failed — %s", self.label, exc)
@@ -690,7 +556,9 @@ class RedlibCollector:
                 clean_lines = []
                 for line in raw_text.splitlines():
                     stripped = line.strip()
-                    if stripped.startswith("/preview/pre/") or stripped.startswith("/img/"):
+                    if stripped.startswith("/preview/pre/") or stripped.startswith(
+                        "/img/"
+                    ):
                         images.append(self.base + stripped)
                     else:
                         clean_lines.append(line)
@@ -732,6 +600,7 @@ class RedlibCollector:
 
                 posts.append(
                     Post(
+                        external_id=f"comment:{url or ts}",
                         text=text,
                         timestamp=ts,
                         metadata={
@@ -755,11 +624,7 @@ class RedlibCollector:
         return posts, subreddits
 
 
-# ──────────────────────────────────────────────
 # SOURCE 4: old.reddit.com HTML
-# ──────────────────────────────────────────────
-
-
 class OldRedditCollector:
     """
     Collects Reddit data by scraping old.reddit.com HTML.
@@ -768,7 +633,7 @@ class OldRedditCollector:
 
     BASE = "https://old.reddit.com"
 
-    def _fetch(self, path: str) -> httpx.Response:
+    def fetch(self, path: str) -> httpx.Response:
         r = httpx.get(
             f"{self.BASE}{path}",
             headers=BROWSER_HEADERS,
@@ -779,21 +644,23 @@ class OldRedditCollector:
             raise ValueError(f"old.reddit.com: HTTP {r.status_code} for {path}")
         if len(r.text) < 3000:
             raise ValueError(f"old.reddit.com: response too short for {path}")
-        if _is_bot_challenge(r.text):
+        if is_bot_challenge(r.text):
             raise ValueError(f"old.reddit.com: anti-bot challenge for {path}")
         return r
 
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
-        log.info("Reddit [4/4 old.reddit.com]: collecting u/%s (limit=%d)", username, limit)
+        log.info(
+            "Reddit [4/4 old.reddit.com]: collecting u/%s (limit=%d)", username, limit
+        )
 
-        profile_r = self._fetch(f"/user/{username}")
+        profile_r = self.fetch(f"/user/{username}")
         soup = BeautifulSoup(profile_r.text, "html.parser")
 
-        display_name, bio, karma, created_utc = self._parse_profile(soup)
-        avatar = self._fetch_avatar(username)
+        display_name, bio, karma, created_utc = self.parse_profile(soup)
+        avatar = self.fetch_avatar(username)
 
-        sub_posts, sub_subs = self._parse_submissions(username, limit)
-        com_posts, com_subs = self._parse_comments(username, limit)
+        sub_posts, sub_subs = self.parse_submissions(username, limit)
+        com_posts, com_subs = self.parse_comments(username, limit)
 
         all_posts = sub_posts + com_posts
         all_posts.sort(key=lambda p: p.timestamp, reverse=True)
@@ -801,7 +668,9 @@ class OldRedditCollector:
 
         log.info(
             "Reddit [old.reddit.com] ✓: u/%s — %d total posts, %d subreddits",
-            username, len(all_posts), len(all_subs),
+            username,
+            len(all_posts),
+            len(all_subs),
         )
 
         return AccountProfile(
@@ -817,7 +686,7 @@ class OldRedditCollector:
             karma=karma,
         )
 
-    def _fetch_avatar(self, username: str) -> str:
+    def fetch_avatar(self, username: str) -> str:
         """Try Reddit OAuth then public Redlib instances for avatar."""
         client_id = os.environ.get("REDDIT_CLIENT_ID", "")
         client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
@@ -852,7 +721,7 @@ class OldRedditCollector:
                 log.debug("old.reddit.com: OAuth avatar failed: %s", exc)
 
         # Try public Redlib for avatar
-        for base in _PUBLIC_REDLIB_INSTANCES[:3]:
+        for base in PUBLIC_REDLIB_INSTANCES[:3]:
             try:
                 r = httpx.get(
                     f"{base}/user/{username}",
@@ -862,7 +731,7 @@ class OldRedditCollector:
                 )
                 if r.status_code != 200 or len(r.text) < 3000:
                     continue
-                if _is_bot_challenge(r.text):
+                if is_bot_challenge(r.text):
                     continue
                 soup = BeautifulSoup(r.text, "html.parser")
                 img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
@@ -876,7 +745,7 @@ class OldRedditCollector:
         log.debug("old.reddit.com: avatar unavailable for u/%s", username)
         return ""
 
-    def _parse_profile(self, soup) -> tuple:
+    def parse_profile(self, soup) -> tuple:
         display_name, bio, karma, created_utc = "", "", None, None
         titlebox = soup.select_one(".titlebox")
         if not titlebox:
@@ -917,7 +786,7 @@ class OldRedditCollector:
 
         return display_name, bio, karma, created_utc
 
-    def _parse_submissions(self, username: str, limit: int) -> tuple:
+    def parse_submissions(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         page_size = min(25, limit)
         while fetched < limit:
@@ -925,7 +794,7 @@ class OldRedditCollector:
             if after:
                 path += f"&after={after}"
             try:
-                r = self._fetch(path)
+                r = self.fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
                 log.warning("old.reddit.com: submissions page failed — %s", exc)
@@ -944,7 +813,7 @@ class OldRedditCollector:
                 text = title_el.text.strip() if title_el else ""
                 permalink = item.get("data-permalink", "")
                 url = ("https://reddit.com" + permalink) if permalink else ""
-                body_images = _extract_image_urls(body_el)
+                body_images = extract_image_urls(body_el)
                 if body_el:
                     bt = body_el.get_text(separator=" ").strip()
                     if bt:
@@ -973,14 +842,14 @@ class OldRedditCollector:
                         pass
 
                 images = []
-                thumb = _get_thumbnail(item)
+                thumb = get_thumbnail(item)
                 if thumb:
                     images.append(thumb)
                 images.extend(body_images)
                 data_url = item.get("data-url", "")
                 if data_url and any(
                     data_url.split("?")[0].lower().endswith(ext)
-                    for ext in _IMAGE_EXTENSIONS
+                    for ext in IMAGE_EXTENSIONS
                 ):
                     if not data_url.startswith("http"):
                         data_url = "https://reddit.com" + data_url
@@ -988,6 +857,7 @@ class OldRedditCollector:
 
                 posts.append(
                     Post(
+                        external_id=f"submission:{url or ts}",
                         text=text,
                         timestamp=ts,
                         metadata={
@@ -1011,7 +881,7 @@ class OldRedditCollector:
                 break
         return posts, subreddits
 
-    def _parse_comments(self, username: str, limit: int) -> tuple:
+    def parse_comments(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         page_size = min(25, limit)
         while fetched < limit:
@@ -1019,7 +889,7 @@ class OldRedditCollector:
             if after:
                 path += f"&after={after}"
             try:
-                r = self._fetch(path)
+                r = self.fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
                 log.warning("old.reddit.com: comments page failed — %s", exc)
@@ -1035,7 +905,7 @@ class OldRedditCollector:
                 score_el = item.select_one(".score.unvoted")
                 link_el = item.select_one("a.bylink")
 
-                images = _extract_image_urls(body_el)
+                images = extract_image_urls(body_el)
                 text = body_el.get_text(separator="\n").strip() if body_el else ""
 
                 url = ""
@@ -1068,6 +938,7 @@ class OldRedditCollector:
 
                 posts.append(
                     Post(
+                        external_id=f"comment:{url or ts}",
                         text=text,
                         timestamp=ts,
                         metadata={
@@ -1092,11 +963,7 @@ class OldRedditCollector:
         return posts, subreddits
 
 
-# ──────────────────────────────────────────────
 # RedditCollector — priority waterfall
-# ──────────────────────────────────────────────
-
-
 class RedditCollector:
     """
     Tries sources in priority order and returns on first success:
@@ -1117,12 +984,12 @@ class RedditCollector:
             errors.append(f"JSON API: {exc}")
 
         # ── Priority 2: Self-hosted Redlib ───────────────
-        self_hosted = RedlibCollector(_SELF_HOSTED_REDLIB, label="self-hosted")
+        self_hosted = RedlibCollector(SELF_HOSTED_REDLIB, label="self-hosted")
         try:
             if self_hosted.probe():
                 return self_hosted.collect(username, limit=limit)
             else:
-                msg = f"self-hosted Redlib at {_SELF_HOSTED_REDLIB} not reachable"
+                msg = f"self-hosted Redlib at {SELF_HOSTED_REDLIB} not reachable"
                 log.info("Reddit [2/4 Redlib/self-hosted]: %s", msg)
                 errors.append(msg)
         except Exception as exc:
@@ -1132,21 +999,24 @@ class RedditCollector:
             errors.append(f"self-hosted Redlib: {exc}")
 
         # ── Priority 3: Public Redlib instances ──────────
-        for idx, instance_url in enumerate(_PUBLIC_REDLIB_INSTANCES, start=1):
+        for idx, instance_url in enumerate(PUBLIC_REDLIB_INSTANCES, start=1):
             label = f"public-{idx}"
             collector = RedlibCollector(instance_url, label=label)
             try:
                 if not collector.probe():
                     log.debug(
                         "Reddit [3/4 Redlib/%s]: %s not reachable, skipping",
-                        label, instance_url,
+                        label,
+                        instance_url,
                     )
                     continue
                 return collector.collect(username, limit=limit)
             except Exception as exc:
                 log.warning(
                     "Reddit [3/4 Redlib/%s] failed for u/%s: %s",
-                    label, username, exc,
+                    label,
+                    username,
+                    exc,
                 )
                 errors.append(f"Redlib {instance_url}: {exc}")
 
@@ -1163,269 +1033,3 @@ class RedditCollector:
             f"Reddit user '{username}' could not be collected — all sources failed:\n"
             + "\n".join(f"  • {e}" for e in errors)
         )
-
-
-# ──────────────────────────────────────────────
-# Twitter collector  (twikit — browser cookies)
-# ──────────────────────────────────────────────
-
-
-class TwitterCollector:
-    """
-    Collects public Twitter data using twikit with browser-extracted cookies.
-    No login flow, no password — bypasses Cloudflare entirely.
-
-    How to get cookies:
-        1. Log into x.com in your browser
-        2. DevTools (F12) → Application → Cookies → https://x.com
-        3. Copy values for 'ct0' and 'auth_token'
-        4. Add to .env:
-               TWITTER_CT0=<value>
-               TWITTER_AUTH_TOKEN=<value>
-
-    Cookies expire after a few weeks — re-extract from browser when they do.
-    """
-
-    def __init__(self):
-        self._client = TwikitClient(language="en-US")
-        self._logged_in = False
-
-    async def _ensure_login(self):
-        if self._logged_in:
-            return
-        ct0 = os.environ.get("TWITTER_CT0")
-        auth_token = os.environ.get("TWITTER_AUTH_TOKEN")
-        if not ct0 or not auth_token:
-            raise RuntimeError(
-                "Twitter cookies not set.\n"
-                "Add TWITTER_CT0 and TWITTER_AUTH_TOKEN to your .env file.\n"
-                "Extract them from DevTools → Application → Cookies → https://x.com"
-            )
-        self._client.set_cookies({"ct0": ct0, "auth_token": auth_token})
-        self._logged_in = True
-        log.info("Twitter: cookies loaded from env (ct0=...%s)", ct0[-6:])
-
-    async def collect(self, username: str, limit: int = 100) -> AccountProfile:
-        username = username.lstrip("@")
-        log.info("Twitter: collecting @%s (limit=%d)", username, limit)
-
-        await self._ensure_login()
-
-        try:
-            user = await self._client.get_user_by_screen_name(username)
-        except (UserNotFound, UserUnavailable) as exc:
-            raise ValueError(
-                f"Twitter user '@{username}' not found or unavailable."
-            ) from exc
-
-        created_utc = _twitter_ts_to_epoch(user.created_at)
-
-        posts: list = []
-        page_size = min(40, limit)
-        result = await self._client.get_user_tweets(
-            user_id=user.id,
-            tweet_type="Tweets",
-            count=page_size,
-        )
-
-        while result:
-            for tweet in result:
-                if tweet.text.startswith("RT @"):
-                    continue
-                ts = _twitter_ts_to_epoch(tweet.created_at)
-
-                images = []
-                try:
-                    media_list = getattr(tweet, "media", None) or []
-                    for m in media_list:
-                        media_url = getattr(m, "media_url_https", None) or getattr(
-                            m, "url", None
-                        )
-                        if media_url:
-                            images.append(media_url)
-                except Exception:
-                    pass
-
-                permalink = f"https://x.com/{username}/status/{tweet.id}"
-
-                posts.append(
-                    Post(
-                        text=tweet.text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "tweet",
-                            "tweet_id": str(tweet.id),
-                            "url": permalink,
-                            "retweet_count": tweet.retweet_count,
-                            "favorite_count": tweet.favorite_count,
-                            "reply_count": tweet.reply_count,
-                            "lang": tweet.lang,
-                            "images": images,
-                        },
-                    )
-                )
-            if len(posts) >= limit:
-                break
-            try:
-                result = await result.next()
-            except Exception:
-                break
-
-        posts = posts[:limit]
-        posts.sort(key=lambda p: p.timestamp, reverse=True)
-        log.info("Twitter: @%s — %d tweets collected", username, len(posts))
-
-        return AccountProfile(
-            platform="twitter",
-            username=username,
-            display_name=user.name,
-            bio=user.description or "",
-            location=user.location or "",
-            profile_image_url=(user.profile_image_url or "").replace(
-                "_normal", "_400x400"
-            ),
-            created_utc=created_utc,
-            posts=posts,
-            follower_count=user.followers_count,
-            following_count=user.following_count,
-        )
-
-
-# ──────────────────────────────────────────────
-# Public entry-points
-# ──────────────────────────────────────────────
-
-SUPPORTED_PLATFORMS = ("reddit", "twitter")
-
-_twitter_collector: Optional[TwitterCollector] = None
-
-
-def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
-    platform = platform.lower().strip()
-    if platform not in SUPPORTED_PLATFORMS:
-        raise ValueError(
-            f"Unsupported platform '{platform}'. Choose from: {SUPPORTED_PLATFORMS}"
-        )
-    if platform == "reddit":
-        return RedditCollector().collect(username, limit=limit)
-    if platform == "twitter":
-        return asyncio.run(_collect_twitter(username, limit))
-    raise ValueError(f"Unhandled platform: {platform}")
-
-
-async def collect_async(
-    platform: str, username: str, limit: int = 100
-) -> AccountProfile:
-    platform = platform.lower().strip()
-    if platform not in SUPPORTED_PLATFORMS:
-        raise ValueError(
-            f"Unsupported platform '{platform}'. Choose from: {SUPPORTED_PLATFORMS}"
-        )
-    if platform == "reddit":
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: RedditCollector().collect(username, limit=limit)
-        )
-    if platform == "twitter":
-        return await _collect_twitter(username, limit)
-    raise ValueError(f"Unhandled platform: {platform}")
-
-
-async def _collect_twitter(username: str, limit: int) -> AccountProfile:
-    global _twitter_collector
-    if _twitter_collector is None:
-        _twitter_collector = TwitterCollector()
-    return await _twitter_collector.collect(username, limit=limit)
-
-
-# ──────────────────────────────────────────────
-# PostgreSQL storage helper
-# ──────────────────────────────────────────────
-
-
-def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
-    cur = conn.cursor()
-
-    created_at_dt = (
-        datetime.fromtimestamp(profile.created_utc, tz=timezone.utc)
-        if profile.created_utc is not None
-        else None
-    )
-
-    cur.execute(
-        """
-        INSERT INTO accounts
-            (case_id, platform, username, display_name, bio, location, created_at, profile_image_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (case_id, platform, username) DO UPDATE SET
-            display_name      = EXCLUDED.display_name,
-            bio               = EXCLUDED.bio,
-            location          = EXCLUDED.location,
-            profile_image_url = EXCLUDED.profile_image_url
-        RETURNING id
-        """,
-        (
-            case_id,
-            profile.platform,
-            profile.username,
-            profile.display_name,
-            profile.bio,
-            profile.location,
-            created_at_dt,
-            profile.profile_image_url,
-        ),
-    )
-    account_id: int = cur.fetchone()["id"]
-
-    for post in profile.posts:
-        post_dt = datetime.fromtimestamp(post.timestamp, tz=timezone.utc)
-        cur.execute(
-            """
-            INSERT INTO posts (account_id, text, timestamp, metadata)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (account_id, post.text, post_dt, json.dumps(post.metadata)),
-        )
-
-    conn.commit()
-    log.info(
-        "DB: saved account_id=%d (%s/%s) under case_id=%d",
-        account_id,
-        profile.platform,
-        profile.username,
-        case_id,
-    )
-    return account_id
-
-
-# ──────────────────────────────────────────────
-# CLI
-# ──────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="ARIA Layer 1 — Data Collection")
-    sub = parser.add_subparsers(dest="cmd")
-
-    p_collect = sub.add_parser("collect", help="Collect an account")
-    p_collect.add_argument("platform", choices=SUPPORTED_PLATFORMS)
-    p_collect.add_argument("username")
-    p_collect.add_argument("--limit", type=int, default=100)
-    p_collect.add_argument("--out", help="Write JSON to this path")
-
-    args = parser.parse_args()
-
-    if args.cmd == "collect":
-        profile = collect(args.platform, args.username, limit=args.limit)
-        output = json.dumps(profile.to_dict(), indent=2, ensure_ascii=False)
-        if args.out:
-            with open(args.out, "w", encoding="utf-8") as fh:
-                fh.write(output)
-            print(f"Saved to {args.out}")
-        else:
-            print(output)
-
-    else:
-        parser.print_help()

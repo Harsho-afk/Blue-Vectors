@@ -17,7 +17,7 @@ services:
             retries: 10
 
     redlib:
-        image: quay.io/redlib/redlib:latest
+        image: tagliasteel/redlib
         container_name: aria-redlib
         restart: unless-stopped
         environment:

@@ -1,7 +1,6 @@
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-
 from fastapi import Cookie, HTTPException, status
 from jose import JWTError, jwt
 import bcrypt
@@ -12,13 +11,13 @@ JWT_SECRET: str = os.environ.get("JWT_SECRET", "dev-secret-change-in-prod")
 JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES: int = int(os.environ.get("JWT_EXPIRE_MINUTES", "1440"))
 
-_BCRYPT_MAX_BYTES = 72
+BCRYPT_MAX_BYTES = 72
 
 
 def hash_password(plain: str) -> str:
     encoded = plain.encode("utf-8")
-    if len(encoded) > _BCRYPT_MAX_BYTES:
-        raise ValueError(f"Password must be at most {_BCRYPT_MAX_BYTES} bytes")
+    if len(encoded) > BCRYPT_MAX_BYTES:
+        raise ValueError(f"Password must be at most {BCRYPT_MAX_BYTES} bytes")
     return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode("utf-8")
 
 

@@ -5,13 +5,10 @@ POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
 """
-
 import os
 from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, field_validator
-
 from auth import (
     create_access_token,
     get_current_user,
@@ -23,8 +20,8 @@ from auth import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# ── Pydantic models ───────────────────────────────────────────────────────────
 
+# ── Pydantic models ───────────────────────────────────────────────────────────
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -44,25 +41,23 @@ class LoginRequest(BaseModel):
 
 
 # ── Cookie helper ─────────────────────────────────────────────────────────────
-
 # TODO (prod): set secure=True when serving over HTTPS
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 _COOKIE_NAME = "aria_token"
 
 
-def _set_auth_cookie(response: Response, token: str) -> None:
+def set_auth_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=_COOKIE_SECURE,      # False for local http dev; True in prod
+        secure=_COOKIE_SECURE,  # False for local http dev; True in prod
         samesite="lax",
         max_age=JWT_EXPIRE_MINUTES * 60,
     )
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, response: Response):
     """
@@ -75,7 +70,7 @@ def register(body: RegisterRequest, response: Response):
 
         # Check for duplicate
         cur.execute("SELECT id FROM users WHERE email = %s", (body.email,))
-        
+
         if cur.fetchone():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -83,7 +78,7 @@ def register(body: RegisterRequest, response: Response):
             )
 
         pw_hash = hash_password(body.password)
-        
+
         cur.execute(
             """
             INSERT INTO users (email, password_hash, full_name)
@@ -93,14 +88,19 @@ def register(body: RegisterRequest, response: Response):
             (body.email, pw_hash, body.full_name),
         )
         conn.commit()
-        
+
         user = dict(cur.fetchone())
     finally:
         conn.close()
 
     token = create_access_token(user["id"], user["email"])
-    _set_auth_cookie(response, token)
-    return {"id": user["id"], "email": user["email"], "full_name": user["full_name"], "role": user["role"]}
+    set_auth_cookie(response, token)
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "full_name": user["full_name"],
+        "role": user["role"],
+    }
 
 
 @router.post("/login")
@@ -112,12 +112,12 @@ def login(body: LoginRequest, response: Response):
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        
+
         cur.execute(
             "SELECT id, email, password_hash, full_name, role FROM users WHERE email = %s",
             (body.email,),
         )
-        
+
         user = cur.fetchone()
     finally:
         conn.close()
@@ -132,8 +132,13 @@ def login(body: LoginRequest, response: Response):
         raise _invalid
 
     token = create_access_token(user["id"], user["email"])
-    _set_auth_cookie(response, token)
-    return {"id": user["id"], "email": user["email"], "full_name": user["full_name"], "role": user["role"]}
+    set_auth_cookie(response, token)
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "full_name": user["full_name"],
+        "role": user["role"],
+    }
 
 
 @router.post("/logout")
