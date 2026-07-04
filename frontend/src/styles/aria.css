@@ -390,7 +390,19 @@ body {
 
 .platform-badge--reddit  { color: #FF4500; border-color: #FF450033; background: #FF450015; }
 .platform-badge--twitter { color: #1D9BF0; border-color: #1D9BF033; background: #1D9BF015; }
+.platform-badge--github { color: #E8EFF5; border-color: #E8EFF533; background: #E8EFF515; }
 
+.profile-card--github { border-left-color: #E8EFF5; }
+
+.osint-btn--github {
+  background: #E8EFF515;
+  color: #E8EFF5;
+  border-color: #E8EFF533;
+}
+.osint-btn--github:hover:not(:disabled) {
+  background: #E8EFF525;
+  border-color: #E8EFF5;
+}
 /* ── Stat pills ──────────────────────────── */
 .stat-pills {
   display: flex;
@@ -1504,4 +1516,145 @@ body {
   border: 1px solid #FF450025;
   border-radius: 2px;
   padding: 2px 6px;
+}
+
+.post-row__type--repo    { color: #E8EFF5; border-color: #E8EFF533; background: #E8EFF512; }
+.post-row__type--push    { color: #4FFFB0; border-color: #4FFFB033; background: #4FFFB012; }
+.post-row__type--pr      { color: #A78BFA; border-color: #A78BFA33; background: #A78BFA12; }
+.post-row__type--issue   { color: #F6C90E; border-color: #F6C90E33; background: #F6C90E12; }
+.post-row__type--comment { color: #5B8DEF; border-color: #5B8DEF33; background: #5B8DEF12; }
+.post-row__type--fork    { color: #FF4500; border-color: #FF450033; background: #FF450012; }
+.post-row__type--star    { color: #F6C90E; border-color: #F6C90E33; background: #F6C90E12; }
+.post-row__type--create  { color: #4FFFB0; border-color: #4FFFB033; background: #4FFFB012; }
+.post-row__type--release { color: #4FFFB0; border-color: #4FFFB033; background: #4FFFB012; }
+.post-row__type--event   { color: #6B7280; border-color: #6B728033; background: #6B728012; }
+
+/* ── NetworkPanel (GitHub followers / following) ────────────────────────── */
+/* Paste anywhere after the existing .breach-card__tag rule in aria.css      */
+
+.network-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #0E1015;
+  border: 1px solid #1E2229;
+  border-top: 2px solid #E8EFF522;
+  border-radius: 0 0 4px 4px;
+}
+
+.network-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.network-panel__title {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  letter-spacing: 1px;
+}
+
+.network-panel__tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.network-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 4px 10px;
+  background: transparent;
+  color: #4A5568;
+  border: 1px solid #2A3040;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.network-tab--active {
+  color: #E8EFF5;
+  border-color: #E8EFF533;
+  background: #E8EFF510;
+}
+
+.network-tab__count {
+  font-size: 9px;
+  color: #6B7280;
+  background: #1E2229;
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+
+.network-tab--active .network-tab__count {
+  color: #E8EFF5;
+  background: #E8EFF518;
+}
+
+.network-panel__search {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  padding: 4px 10px;
+  width: 160px;
+  background: #111318;
+  color: #E2E8F0;
+  border: 1px solid #1E2229;
+  border-radius: 3px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.network-panel__search:focus {
+  border-color: #E8EFF544;
+}
+
+.network-panel__search::placeholder {
+  color: #4A5568;
+}
+
+.network-panel__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.network-login {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #E8EFF5;
+  background: #E8EFF508;
+  border: 1px solid #E8EFF518;
+  border-radius: 3px;
+  padding: 3px 8px;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.network-login:hover {
+  background: #E8EFF515;
+  border-color: #E8EFF544;
+  color: #fff;
+}
+
+.network-panel__empty {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #4A5568;
+  padding: 8px 0;
+}
+
+.network-panel__truncation {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #1E2229;
 }

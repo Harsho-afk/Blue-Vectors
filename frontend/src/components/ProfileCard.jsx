@@ -20,7 +20,9 @@ export default function ProfileCard({ profile }) {
     ? new Date(profile.created_utc * 1000).toISOString().slice(0, 10)
     : null;
 
-  const handle = (profile.platform === "twitter" ? "@" : "u/") + profile.username;
+  const handle = profile.platform === "twitter" ? `@${profile.username}`
+                : profile.platform === "github" ? `github.com/${profile.username}`
+                : `u/${profile.username}`;
   const palette = AVATAR_PALETTES[usernameHash(profile.username) % AVATAR_PALETTES.length];
 
   return (
@@ -59,14 +61,17 @@ export default function ProfileCard({ profile }) {
       </div>
 
       <div className="stat-pills">
-        {profile.karma          != null && <StatPill label="karma"     value={profile.karma.toLocaleString()} />}
-        {profile.follower_count != null && <StatPill label="followers" value={profile.follower_count.toLocaleString()} color={C.blue} />}
-        {profile.following_count!= null && <StatPill label="following" value={profile.following_count.toLocaleString()} color={C.muted2} />}
-        <StatPill label="posts" value={profile.posts?.length ?? 0} />
-        {profile.subreddits?.length > 0 && (
-          <StatPill label="subreddits" value={profile.subreddits.length} color={C.reddit} />
-        )}
-        {created && <StatPill label="joined" value={created} color={C.muted2} />}
+            {profile.karma          != null && <StatPill label="karma"     value={profile.karma.toLocaleString()} />}
+            {profile.follower_count != null && <StatPill label="followers" value={profile.follower_count.toLocaleString()} color={C.blue} />}
+            {profile.following_count!= null && <StatPill label="following" value={profile.following_count.toLocaleString()} color={C.muted2} />}
+            <StatPill label="posts" value={profile.posts?.length ?? 0} />
+            {profile.subreddits?.length > 0 && (
+              <StatPill label="subreddits" value={profile.subreddits.length} color={C.reddit} />
+            )}
+            {profile.platform === "github" && profile.topLanguages?.length > 0 && (
+              <StatPill label="languages" value={profile.topLanguages.join(", ")} color={C.github} />
+            )}
+            {created && <StatPill label="joined" value={created} color={C.muted2} />}
       </div>
 
       {profile.subreddits?.length > 0 && (

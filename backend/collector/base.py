@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from .twitter import TwitterCollector
 from .reddit import RedditCollector
+from .github import GitHubCollector
 from .models import AccountProfile, log
 
 load_dotenv()
@@ -85,7 +86,7 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
 
 
 # Public entry-points
-SUPPORTED_PLATFORMS = ("reddit", "twitter")
+SUPPORTED_PLATFORMS = ("reddit", "twitter", "github")
 
 
 def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
@@ -98,6 +99,8 @@ def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
         return RedditCollector().collect(username, limit=limit)
     if platform == "twitter":
         return asyncio.run(collect_twitter(username, limit))
+    if platform == "github":
+        return GitHubCollector().collect(username, limit=limit)
     raise ValueError(f"Unhandled platform: {platform}")
 
 
@@ -116,6 +119,11 @@ async def collect_async(
         )
     if platform == "twitter":
         return await collect_twitter(username, limit)
+    if platform == "github":
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: GitHubCollector().collect(username, limit=limit)
+        )
     raise ValueError(f"Unhandled platform: {platform}")
 
 

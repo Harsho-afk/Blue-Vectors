@@ -17,6 +17,7 @@ export const C = {
   blue:      "#5B8DEF",
   reddit:    "#FF4500",
   twitter:   "#1D9BF0",
+  github:    "#E8EFF5",
 };
 
 export const FONT = {

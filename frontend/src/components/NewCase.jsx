@@ -117,6 +117,7 @@ export default function NewCase() {
                 <option value="">NO PLATFORM</option>
                 <option value="reddit">REDDIT</option>
                 <option value="twitter">TWITTER</option>
+                <option value="github">GITHUB</option>
               </select>
 
               {identifiers.length > 1 && (
