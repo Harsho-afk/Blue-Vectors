@@ -46,6 +46,8 @@ interface StepEvent {
   pairs?: number
   count?: number
   claims?: number
+  results?: number
+  entities?: number
   accounts_collected?: number
   display_name?: string
   error?: string
@@ -55,7 +57,7 @@ interface StepEvent {
   phones?: number
 }
 
-type Phase = 'discovery' | 'collection' | 'breach' | 'phone' | 'correlation' | 'insights' | 'intelligence'
+type Phase = 'discovery' | 'collection' | 'breach' | 'phone' | 'dorking' | 'correlation' | 'insights' | 'intelligence'
 
 interface StepEntry {
   id: string
@@ -79,12 +81,13 @@ const PHASE_META: Record<Phase, { label: string; icon: React.ElementType }> = {
   collection: { label: 'Deep Collection', icon: HardDrive },
   breach: { label: 'Breach Analysis', icon: Shield },
   phone: { label: 'Phone Lookup', icon: Phone },
+  dorking: { label: 'Web Expansion Survey', icon: Globe },
   correlation: { label: 'Identity Correlation', icon: Zap },
   insights: { label: 'Insight Analysis', icon: Sparkles },
   intelligence: { label: 'Intelligence Briefing', icon: Bot },
 }
 
-const PHASE_ORDER: Phase[] = ['discovery', 'collection', 'breach', 'phone', 'correlation', 'insights', 'intelligence']
+const PHASE_ORDER: Phase[] = ['discovery', 'collection', 'breach', 'phone', 'dorking', 'correlation', 'insights', 'intelligence']
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +109,7 @@ function stepToPhase(step: string): Phase {
   if (step === 'collect') return 'collection'
   if (step === 'breach') return 'breach'
   if (step === 'phone') return 'phone'
+  if (step === 'dorking') return 'dorking'
   if (step === 'correlate') return 'correlation'
   if (step === 'insights') return 'insights'
   if (step === 'intelligence') return 'intelligence'
@@ -118,6 +122,7 @@ function stepLabel(event: StepEvent): string {
   if (step === 'collect') return `Collect ${capitalize(platform || '?')} — ${username || seed}`
   if (step === 'breach') return `Check breaches for ${seed}`
   if (step === 'phone') return `Lookup phone ${seed}`
+  if (step === 'dorking') return 'Web expansion survey (dorking)'
   if (step === 'correlate') return 'Run identity correlation'
   if (step === 'insights') return 'Compute insights'
   if (step === 'intelligence') return 'Generate intelligence briefing'
@@ -130,6 +135,7 @@ function stepDetail(event: StepEvent): string | undefined {
   if (event.step === 'breach' && event.status === 'done') return `${event.breaches ?? 0} breach(es) found`
   if (event.step === 'correlate' && event.status === 'done') return `${event.pairs ?? 0} pair(s) analyzed`
   if (event.step === 'insights' && event.status === 'done') return `${event.count ?? 0} insight(s) generated`
+  if (event.step === 'dorking' && event.status === 'done') return `${event.results ?? 0} results, ${event.entities ?? 0} entities`
   if (event.step === 'intelligence' && event.status === 'done') return `${event.claims ?? 0} cited claim(s)`
   return event.message
 }

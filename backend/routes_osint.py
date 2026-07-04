@@ -17,6 +17,7 @@ from pydantic import BaseModel, EmailStr
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
 from collector.phone import PhoneCollector
+from dorking import run_dorking
 from lead_scorer import score_maigret_results
 
 router = APIRouter(prefix="/api/cases", tags=["osint"])
@@ -35,6 +36,13 @@ class BreachLookupRequest(BaseModel):
 
 class PhoneLookupRequest(BaseModel):
     phone: str
+
+
+class DorkingRequest(BaseModel):
+    identifier_type: str
+    value: str
+    platform_hint: Optional[str] = None
+    use_llm: bool = True
 
 
 class ImportAccountRequest(BaseModel):
@@ -201,6 +209,51 @@ def list_osint_lookups(
         })
 
     return {"lookups": lookups}
+
+
+@router.post("/{case_id}/osint/dorking")
+async def run_dorking_survey(
+    case_id: int,
+    body: DorkingRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Run a dorking survey — deterministic templates + LLM query expansion."""
+    conn = get_db_conn()
+    try:
+        _check_case_ownership(conn, case_id, current_user["id"])
+    finally:
+        conn.close()
+
+    if body.identifier_type not in ("username", "email", "phone", "profile_url"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported identifier type: {body.identifier_type}",
+        )
+
+    result = run_dorking(
+        identifier_type=body.identifier_type,
+        value=body.value,
+        platform_hint=body.platform_hint,
+        use_llm=body.use_llm,
+    )
+
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (case_id, "dorking", body.value, json.dumps(result, default=str)),
+        )
+        lookup_id = cur.fetchone()["id"]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"lookup_id": lookup_id, **result}
 
 
 @router.post("/{case_id}/osint/import-account", status_code=status.HTTP_201_CREATED)

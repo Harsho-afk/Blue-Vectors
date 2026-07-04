@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS osint_lookups (
     id          SERIAL PRIMARY KEY,
     case_id     INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
     lookup_type TEXT NOT NULL
-                CHECK (lookup_type IN ('maigret', 'sherlock', 'hibp', 'xposedornot', 'profile_url_scrape', 'phone')),
+                CHECK (lookup_type IN ('maigret', 'sherlock', 'hibp', 'xposedornot', 'profile_url_scrape', 'phone', 'dorking')),
     input_value TEXT NOT NULL,
     result_json JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()

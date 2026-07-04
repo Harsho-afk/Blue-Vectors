@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, Loader2, Phone, Search, Shield } from 'lucide-react'
+import { ChevronDown, Globe, Loader2, Phone, Search, Shield } from 'lucide-react'
 import { API } from '@/lib/aria-api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import {
 import { MaigretResults } from './maigret-results'
 import { BreachResults } from './breach-results'
 import { PhoneResults } from './phone-results'
+import { DorkingResults } from './dorking-results'
 
 interface Identifier {
   id: number
@@ -44,6 +45,7 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
   const [searchingUsername, setSearchingUsername] = useState<string | null>(null)
   const [searchingEmail, setSearchingEmail] = useState<string | null>(null)
   const [searchingPhone, setSearchingPhone] = useState<string | null>(null)
+  const [dorkingIdent, setDorkingIdent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const fetchLookups = useCallback(() => {
@@ -144,6 +146,39 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
     }
   }
 
+  const handleDorking = async (ident: Identifier) => {
+    setDorkingIdent(ident.value)
+    setError(null)
+    try {
+      const res = await fetch(
+        `${API}/api/cases/${caseId}/osint/dorking`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            identifier_type: ident.identifier_type,
+            value: ident.value,
+            platform_hint: ident.platform_hint,
+            use_llm: true,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
+        throw new Error(detail)
+      }
+      fetchLookups()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Dorking survey failed')
+    } finally {
+      setDorkingIdent(null)
+    }
+  }
+
   const usernameIdents = identifiers.filter(
     (i) => i.identifier_type === 'username'
   )
@@ -160,6 +195,7 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
     (l) => l.lookup_type === 'xposedornot' || l.lookup_type === 'hibp'
   )
   const phoneLookups = lookups.filter((l) => l.lookup_type === 'phone')
+  const dorkingLookups = lookups.filter((l) => l.lookup_type === 'dorking')
   const hasResults = lookups.length > 0
 
   return (
@@ -197,24 +233,44 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
                     <Badge variant='default'>Username</Badge>
                     <span className='font-mono text-sm'>{ident.value}</span>
                   </div>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={searchingUsername === ident.value}
-                    onClick={() => handleUsernameSearch(ident.value)}
-                  >
-                    {searchingUsername === ident.value ? (
-                      <>
-                        <Loader2 className='h-3 w-3 animate-spin' />
-                        Searching...
-                      </>
-                    ) : (
-                      <>
-                        <Search className='h-3 w-3' />
-                        Search Platforms
-                      </>
-                    )}
-                  </Button>
+                  <div className='flex gap-1.5'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={searchingUsername === ident.value}
+                      onClick={() => handleUsernameSearch(ident.value)}
+                    >
+                      {searchingUsername === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Searching...
+                        </>
+                      ) : (
+                        <>
+                          <Search className='h-3 w-3' />
+                          Platforms
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={dorkingIdent === ident.value}
+                      onClick={() => handleDorking(ident)}
+                    >
+                      {dorkingIdent === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Surveying...
+                        </>
+                      ) : (
+                        <>
+                          <Globe className='h-3 w-3' />
+                          Web Survey
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               ))}
               {emailIdents.map((ident) => (
@@ -226,24 +282,44 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
                     <Badge variant='secondary'>Email</Badge>
                     <span className='font-mono text-sm'>{ident.value}</span>
                   </div>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={searchingEmail === ident.value}
-                    onClick={() => handleBreachLookup(ident.value)}
-                  >
-                    {searchingEmail === ident.value ? (
-                      <>
-                        <Loader2 className='h-3 w-3 animate-spin' />
-                        Checking...
-                      </>
-                    ) : (
-                      <>
-                        <Shield className='h-3 w-3' />
-                        Check Breaches
-                      </>
-                    )}
-                  </Button>
+                  <div className='flex gap-1.5'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={searchingEmail === ident.value}
+                      onClick={() => handleBreachLookup(ident.value)}
+                    >
+                      {searchingEmail === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Shield className='h-3 w-3' />
+                          Breaches
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={dorkingIdent === ident.value}
+                      onClick={() => handleDorking(ident)}
+                    >
+                      {dorkingIdent === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Surveying...
+                        </>
+                      ) : (
+                        <>
+                          <Globe className='h-3 w-3' />
+                          Web Survey
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               ))}
               {phoneIdents.map((ident) => (
@@ -255,24 +331,44 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
                     <Badge variant='secondary'>Phone</Badge>
                     <span className='font-mono text-sm'>{ident.value}</span>
                   </div>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={searchingPhone === ident.value}
-                    onClick={() => handlePhoneLookup(ident.value)}
-                  >
-                    {searchingPhone === ident.value ? (
-                      <>
-                        <Loader2 className='h-3 w-3 animate-spin' />
-                        Looking up...
-                      </>
-                    ) : (
-                      <>
-                        <Phone className='h-3 w-3' />
-                        Lookup Phone
-                      </>
-                    )}
-                  </Button>
+                  <div className='flex gap-1.5'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={searchingPhone === ident.value}
+                      onClick={() => handlePhoneLookup(ident.value)}
+                    >
+                      {searchingPhone === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Looking up...
+                        </>
+                      ) : (
+                        <>
+                          <Phone className='h-3 w-3' />
+                          Phone
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={dorkingIdent === ident.value}
+                      onClick={() => handleDorking(ident)}
+                    >
+                      {dorkingIdent === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Surveying...
+                        </>
+                      ) : (
+                        <>
+                          <Globe className='h-3 w-3' />
+                          Web Survey
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -332,6 +428,26 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
         >
           {phoneLookups.map((lookup) => (
             <PhoneResults key={lookup.id} lookup={lookup as any} />
+          ))}
+        </ResultSection>
+      )}
+
+      {dorkingLookups.length > 0 && (
+        <ResultSection
+          title='Web Survey (Dorking)'
+          icon={<Globe className='h-4 w-4' />}
+          count={dorkingLookups.length}
+        >
+          {dorkingLookups.map((lookup) => (
+            <DorkingResults
+              key={lookup.id}
+              lookup={lookup as any}
+              caseId={caseId}
+              onAccountImported={() => {
+                fetchLookups()
+                onAccountImported?.()
+              }}
+            />
           ))}
         </ResultSection>
       )}
