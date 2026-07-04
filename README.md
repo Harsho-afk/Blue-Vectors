@@ -1,36 +1,110 @@
 # ARIA — Adaptive Resolution of Identity Across Platforms
 
-**SOCMINT-based cross-platform identity resolution system**  
-Hackathon deadline: **July 4, 2026** | Team: 3 members
+**SOCMINT-based cross-platform identity resolution & case management system**
+Hackathon deadline: **July 4, 2026** | Today: June 12 (22 days) | Team: 3 members
 
 ---
 
 ## What ARIA Does
 
-Given a seed account (username + platform), ARIA determines whether accounts on other platforms belong to the same real-world person — and explains *why*, signal by signal.
+ARIA is a case-centric OSINT investigation platform. An investigator creates a **case**, attaches one or more **seed identifiers** (username, email, phone, profile URL), and ARIA:
 
-Design principle: **AI recommends, investigator decides.** ARIA never claims two accounts ARE the same person. It surfaces evidence, assigns confidence, and decomposes reasoning via SHAP. The human investigator makes the final call.
+1. Collects public digital footprints across platforms (Reddit, Twitter, username enumeration via Sherlock, breach data via HaveIBeenPwned)
+2. Extracts features for each discovered account (profile similarity, stylometry, temporal behaviour, content/sentiment)
+3. Correlates accounts that may belong to the same real-world person, with a **confidence score (0–100%)** and a **per-signal explanation**
+4. Visualises results: ranked candidates, evidence breakdown, social graph, unified timeline
+5. Exports a structured SOCMINT report (JSON + PDF)
+
+Design principle: **AI recommends, investigator decides.** ARIA never claims two accounts ARE the same person. Confidence bands are:
+
+| Band | Range |
+|---|---|
+| Low | 0–40% |
+| Medium | 41–70% |
+| High | 71–100% |
+
+Every score must be accompanied by a per-signal explanation of *why* it was assigned.
 
 ---
 
-## System Architecture: 5-Layer Pipeline
+## System Architecture: 7-Layer Pipeline
 
 ```
-Layer 1  Data Collection      Seed username → raw posts, profile, social graph
-Layer 2  Feature Extraction   Raw data per account → 5 feature vectors
-Layer 3  Correlation Engine   Feature vectors (account pair) → confidence score 0–1
-Layer 4  Graph Intelligence   Social graph edges → GNN node embeddings
-Layer 5  Explainability       Fusion model + SHAP → per-signal evidence breakdown
+Layer 0  Auth + Case Management   Login, case creation, multi-identifier input (NEW)
+Layer 1  Data Collection          Identifiers → raw posts, profiles, OSINT lookups
+Layer 2  Feature Extraction       Raw data per account → similarity feature scores
+Layer 3  Correlation Engine       Feature scores (account pair) → confidence score 0–1
+Layer 4  Graph Intelligence       Social graph edges → GNN node embeddings (STRETCH)
+Layer 5  Explainability           Fusion model → per-signal evidence breakdown
+Layer 6  Profiling + Report       Suspect profile aggregation → exportable SOCMINT report (NEW)
 ```
 
 End-to-end flow:
-1. Investigator enters seed account (e.g. `u/johndoe` on Reddit)
-2. Layer 1 fetches public posts, bio, timestamps, profile image, follower list
-3. Layer 2 computes profile similarity, stylometric fingerprint, temporal rhythm, graph neighbourhood, image embedding for each candidate pair
-4. Layer 3 fuses feature vectors → ranked candidate matches with confidence scores
-5. Layer 4 runs GAT on the social graph; feeds node embeddings back into fusion model
-6. Layer 5 runs SHAP; decomposes each prediction into per-signal evidence
-7. Frontend displays ranked matches with evidence panel, confidence breakdown, and graph visualisation
+1. Investigator registers/logs in, creates a case with a title and one or more identifiers
+2. Layer 0 routes each identifier by type (username → Reddit/Twitter/Sherlock, email → HIBP, profile_url → direct scrape)
+3. Layer 1 collects public posts, bios, timestamps, profile images, OSINT lookup results — all scoped to `case_id`
+4. Layer 2 computes per-account feature scores: profile similarity, stylometric fingerprint, temporal rhythm, content/sentiment, (image similarity — stretch)
+5. Layer 3 fuses feature scores → ranked candidate matches with confidence scores
+6. Layer 4 (stretch) runs GAT on the social graph; feeds node embeddings back into fusion
+7. Layer 5 decomposes each prediction into per-signal evidence (SHAP if trained model exists, otherwise weighted-component breakdown)
+8. Layer 6 aggregates everything into a suspect profile and generates a SOCMINT report
+9. Frontend displays ranked matches, evidence panel, graph view, timeline, and report export
+
+---
+
+## MVP vs. Stretch — what's demo-guaranteed
+
+Given the 22-day timeline, the correlation engine ships as a **rule-based weighted MVP first**. ML components (Siamese LSTM, GAT, trained XGBoost+SHAP) are stretch goals attempted only if Phases 1–3 land early. The frontend and report always display real evidence — MVP or ML-based, the *interface* doesn't change, only what powers the score does.
+
+| Component | MVP (guaranteed) | Stretch (if time allows) |
+|---|---|---|
+| Username similarity | rapidfuzz (Levenshtein/Jaro-Winkler) | — |
+| Bio similarity | sentence-transformers cosine | — |
+| Temporal similarity | histogram comparison (Jensen-Shannon) | — |
+| Image similarity | skipped, neutral value | CLIP cosine similarity |
+| Stylometry | TF-IDF cosine similarity fallback | Siamese LSTM (PAN 2020, target AUC > 0.75) |
+| Graph reasoning | skipped | GAT on Foursquare-Twitter, 128-dim embeddings |
+| Fusion | weighted sum of available signals | XGBoost on 6 features |
+| Explainability | per-component score breakdown ("why") | SHAP TreeExplainer |
+
+### MVP Correlation Scoring Spec (Layer 2/3)
+
+For a candidate account pair, compute up to 3 component scores, each 0–1:
+
+```
+username_score  = rapidfuzz weighted ratio (Levenshtein + Jaro-Winkler + LCS) on username/display_name
+bio_score       = cosine similarity of sentence-transformers (all-MiniLM-L6-v2) embeddings of bio text
+temporal_score  = 1 - Jensen-Shannon divergence of hour-of-day posting histograms
+```
+
+If a component is unavailable (e.g. empty bio), exclude it and renormalize remaining weights. Default weights:
+
+```
+username_score : 0.40
+bio_score       : 0.35
+temporal_score  : 0.25
+```
+
+```
+confidence = Σ (weight_i × score_i) / Σ (weight_i for available signals)
+```
+
+Map `confidence` (0–1) to 0–100% and to Low/Medium/High bands above.
+
+**Explanation output** (feeds Evidence Panel + report, replaces SHAP until/unless a trained model exists):
+
+```json
+{
+  "username_score": 0.82,
+  "bio_score": 0.61,
+  "temporal_score": 0.74,
+  "confidence": 0.72,
+  "band": "High",
+  "notes": ["Image score unavailable — excluded, weights renormalized"]
+}
+```
+
+This JSON shape is stored in `linkage_results.shap_json` (field name kept for schema/frontend compatibility — it holds either the SHAP breakdown or this weighted breakdown, both shaped as per-signal contributions).
 
 ---
 
@@ -38,29 +112,77 @@ End-to-end flow:
 
 | Domain | Technology | Notes |
 |---|---|---|
-| ML Framework | PyTorch 2.x | Siamese net, GNN training |
-| Graph ML | PyTorch Geometric | GAT / GraphSAGE |
-| NLP | spaCy + NLTK | Stylometric features, rule-based |
-| Embeddings | sentence-transformers (all-MiniLM-L6-v2) | Bio / profile text similarity |
-| Image | OpenAI CLIP | Profile image similarity — frozen, do NOT retrain |
-| Image Captioning | BLIP (Salesforce) | Generate captions from profile images |
-| String Similarity | rapidfuzz | Username / display name matching |
-| XAI | SHAP (TreeExplainer) | Explain fusion model predictions |
-| ML Training Env | Google Colab / Kaggle | T4 GPU, free tier |
+| Auth | fastapi-users, JWT (httpOnly cookie), bcrypt | Layer 0 |
+| Routing (frontend) | react-router-dom | Protected routes: Login → Dashboard → Case views |
+| ML Framework | PyTorch 2.x | Stretch: Siamese net, GNN training |
+| Graph ML | PyTorch Geometric | Stretch: GAT / GraphSAGE |
+| NLP | spaCy + NLTK + VADER | Stylometry (stretch), sentiment/tone (MVP) |
+| Embeddings | sentence-transformers (all-MiniLM-L6-v2) | Bio / profile text similarity (MVP) |
+| Image | OpenAI CLIP | Stretch — frozen, do NOT retrain |
+| Image Captioning | BLIP (Salesforce) | Stretch |
+| String Similarity | rapidfuzz | Username / display name matching (MVP) |
+| XAI | SHAP (TreeExplainer) | Stretch — MVP uses weighted-component breakdown instead |
+| OSINT — username enum | Sherlock | New, Layer 1 |
+| OSINT — breach lookup | HaveIBeenPwned API | New, Layer 1 |
+| ML Training Env | Google Colab / Kaggle | T4 GPU, free tier — stretch only |
 | Backend | FastAPI (Python 3.11) | Async API server |
-| Primary DB | PostgreSQL | Profiles, posts, feature vectors |
-| Cache / Queue | Redis | Rate limiting, job queuing |
+| Primary DB | PostgreSQL | Case-centric schema (see below) |
+| Cache / Queue | Redis | Rate limiting, job queuing, demo result caching |
 | Reddit Scraping | Redlib (no-key scraping) | See Layer 1 details |
 | Twitter Scraping | twikit (browser cookies) | See Layer 1 details |
-| LinkedIn | Mock data / Proxycurl | No stable public API |
+| LinkedIn | Mock/pre-loaded data | Labelled "Pre-loaded OSINT data" in UI |
 | Frontend | React + Tailwind CSS | Dark theme (Palantir aesthetic) |
 | Graph Viz | React Flow + D3.js | Social graph, identity links |
-| Charts | Recharts | SHAP breakdown bar charts |
-| Containers | Docker Compose | One-command startup |
+| Timeline Viz | react-chrono or custom CSS scroll list | D3 optional — simplicity over polish |
+| Charts | Recharts | Evidence breakdown bar charts |
+| Report | WeasyPrint (PDF) | Fallback: browser print-to-PDF from JSON |
+| Containers | Docker Compose | postgres + redis + fastapi |
 
 ---
 
-## Layer 1: Data Collection (BUILT ✅)
+## Layer 0: Auth + Case Management (🔲 Not started)
+
+The entry gate. Every action in ARIA is scoped to a case; every case is owned by an authenticated investigator.
+
+### Auth
+
+- JWT-based registration and login via **fastapi-users**
+- Passwords hashed with bcrypt
+- Tokens stored in **httpOnly cookies** — requires `credentials: include` on frontend fetches and CORS `allow_credentials=True` on backend
+- Access control: investigators can only view/modify their own cases (`WHERE investigator_id = current_user.id` on every case query) — no shared case access in v1
+
+### Endpoints
+
+```
+POST /api/auth/register   { email, password, full_name } → JWT
+POST /api/auth/login      { email, password }            → JWT
+POST /api/auth/logout     → clears cookie
+```
+
+### Case Management
+
+```
+POST   /api/cases               { title, identifiers[] } → case_id
+GET    /api/cases                list cases for logged-in investigator
+GET    /api/cases/{case_id}      case details, status, linked accounts, results
+DELETE /api/cases/{case_id}      delete case + all associated data
+```
+
+Each identifier in `identifiers[]` is one of:
+
+```
+{ identifier_type: "username" | "email" | "phone" | "profile_url", value: "...", platform_hint?: "reddit"|"twitter"|... }
+```
+
+Identifier routing:
+- `username` → Reddit + Twitter collectors, Sherlock
+- `email` → HaveIBeenPwned breach lookup
+- `profile_url` → direct scrape (httpx + BeautifulSoup)
+- `phone` → reserved, no lookup source defined yet
+
+---
+
+## Layer 1: Data Collection (✅ Built, case-scoped)
 
 Layer 1 is the foundation. All other layers depend on data quality.
 **Collect only public data — no authentication bypass, no private endpoints.**
@@ -70,7 +192,8 @@ Layer 1 is the foundation. All other layers depend on data quality.
 ```
 collector.py      Core collection logic — RedditCollector, TwitterCollector, save_to_db
 app.py            FastAPI server exposing GET /collect/{platform}/{username}
-schema.sql        PostgreSQL schema (accounts + posts tables)
+schema.sql        PostgreSQL schema (case-centric, 10 tables)
+migration_001.sql Migration from original 2-table schema to case-centric schema
 ARIACollector.jsx React UI for triggering collection and displaying results
 requirements.txt  Python dependencies
 ```
@@ -103,6 +226,7 @@ Post.metadata.retweet_count   int  Twitter only
 Post.metadata.favorite_count  int  Twitter only
 Post.metadata.reply_count     int  Twitter only
 Post.metadata.lang     str    Twitter only
+spike_flag             bool   set by Layer 2 spike/gap detector (stretch), default false
 ```
 
 ### Reddit Collector
@@ -143,6 +267,15 @@ Contains two monkey patches (documented in code) for upstream twikit bugs active
 
 Collects: username, display name, bio, location, profile image URL (`_400x400`), creation date, follower/following counts, up to `limit` original tweets (retweets filtered), per-tweet metadata.
 
+### OSINT Lookups (🔲 Not started — Phase 1, days 4–5)
+
+```
+POST /api/osint/username-search   { username } → Sherlock results: platforms where handle exists
+POST /api/osint/breach-lookup     { email }    → HIBP results: breach list + exposed data types
+```
+
+Results stored in `osint_lookups` (raw JSON in `result_json`). Pre-run all lookups before demo day; demo shows stored results, not live calls (live OSINT lookups can be slow/rate-limited).
+
 ---
 
 ## Setup
@@ -168,23 +301,32 @@ Create a `.env` file in the project root:
 ```env
 TWITTER_CT0=your_ct0_value_here
 TWITTER_AUTH_TOKEN=your_auth_token_here
+JWT_SECRET=your_jwt_signing_secret_here
 ```
 
 Cookies expire after a few weeks. Re-extract from browser when they do.
 
-### 3. Database (optional for CLI, required for save_to_db)
+### 3. Database
 
+Fresh install:
 ```bash
 psql -d aria -f schema.sql
 ```
 
+Upgrading an existing Layer-1-only database:
+```bash
+psql -d aria -f migration_001.sql
+```
+
+Both produce an identical case-centric schema (see below).
+
 ### 4. Frontend
 
-The React component (`ARIACollector.jsx`) is a Vite project. The FastAPI server must be running on `http://localhost:8000`.
+The React app (Vite + react-router-dom) requires the FastAPI server running on `http://localhost:8000`.
 
 ```bash
 uvicorn app:app --reload
-# Then in your Vite project, import ARIACollector from ./ARIACollector.jsx
+# Then: npm install && npm run dev
 ```
 
 ---
@@ -220,7 +362,7 @@ for post in reddit_profile.posts:
     print(post.metadata["type"], post.timestamp, post.text[:80])
 
 conn = psycopg2.connect("postgresql://localhost/aria")
-account_id = save_to_db(reddit_profile, conn)
+account_id = save_to_db(reddit_profile, conn, case_id=1)  # case_id now required
 ```
 
 ### Python module (async — inside FastAPI)
@@ -243,20 +385,34 @@ Returns `AccountProfile.to_dict()` JSON. Raises HTTP 404 if user not found.
 
 ---
 
-## PostgreSQL Schema (Layer 1 tables)
+## PostgreSQL Schema (case-centric, 10 tables)
 
 ```sql
-accounts(id, platform, username, display_name, bio, location, created_at, profile_image_url)
-posts(id, account_id, text, timestamp, metadata JSONB,
-      UNIQUE(account_id, timestamp, text))   -- deduplication on re-collection
-```
+-- Layer 0: Auth + Case Management
+users(id, email, password_hash, full_name, role, created_at)
+cases(id, investigator_id→users, title, status, created_at, closed_at)
+case_identifiers(id, case_id→cases, identifier_type, value, platform_hint, created_at)
 
-Future layers will add:
-```sql
+-- Layer 1: Data Collection + OSINT
+accounts(id, case_id→cases, platform, username, display_name, bio, location,
+         created_at, profile_image_url, UNIQUE(case_id, platform, username))
+posts(id, account_id→accounts, text, timestamp, metadata JSONB, spike_flag BOOLEAN DEFAULT false,
+      UNIQUE(account_id, timestamp, text))
+osint_lookups(id, case_id→cases, lookup_type, input_value, result_json JSONB, created_at)
+
+-- Layer 2/3/5: Features + Correlation + Explainability
+linkage_results(id, case_id→cases, account_a_id→accounts, account_b_id→accounts,
+                 confidence NUMERIC(5,2), shap_json JSONB, created_at,
+                 CHECK (account_a_id < account_b_id))
+
+-- Stretch — not created until the corresponding layer is built
 graph_edges(source_account_id, target_account_id, edge_type, weight)
 feature_vectors(id, account_id, profile_vec, style_vec, temporal_vec, graph_vec, image_vec)
-linkage_results(id, account_a_id, account_b_id, confidence, shap_json, created_at)
+content_analysis(id, account_id→accounts, top_keywords_json, hashtags_json,
+                  sentiment_compound, tone_label, cross_post_fingerprint, created_at)
 ```
+
+`accounts` is **per-case**: the same real account collected for two different cases produces two rows. This avoids merge/dedup logic at the cost of re-collection if a suspect reappears — acceptable tradeoff for the hackathon timeline, documented as a known limitation.
 
 ---
 
@@ -274,70 +430,117 @@ features = extract(profile)
 
 ---
 
-## Layer 2: Feature Extraction (NOT YET BUILT)
+## Layer 2: Feature Extraction (🔲 Not started)
 
-Five sub-modules, each producing a scalar similarity score (0–1) for a given account pair.
-
-### 2.1 Profile Similarity Module
+### 2.1 Profile Similarity Module (MVP)
 
 | Field | Method | Library | Weight |
 |---|---|---|---|
-| Username | Levenshtein + Jaro-Winkler + LCS | rapidfuzz | 0.25 |
-| Display Name | Token sort ratio | rapidfuzz | 0.15 |
-| Bio | Cosine similarity of sentence embeddings | sentence-transformers | 0.25 |
-| Location | Exact + fuzzy match | rapidfuzz | 0.10 |
-| Education / Work | Token overlap + embedding similarity | rapidfuzz + ST | 0.15 |
-| Profile Image | CLIP embedding cosine similarity | openai/clip | 0.10 |
+| Username | Levenshtein + Jaro-Winkler + LCS | rapidfuzz | 0.40 |
+| Bio | Cosine similarity of sentence embeddings | sentence-transformers | 0.35 |
+| Temporal | 1 − Jensen-Shannon divergence of posting-hour histograms | scipy | 0.25 |
 
-### 2.2 Stylometric Module (core ML contribution)
+See **MVP Correlation Scoring Spec** above for the exact formula and output JSON shape.
 
-Train a Siamese network taking two sets of posts as input. Features: writing style fingerprint, vocabulary richness, sentence length distribution, punctuation patterns, function word frequency, part-of-speech tag ratios.
+### 2.2 Content Analysis Module (MVP, new)
 
-Use `post.text` from all `AccountProfile.posts` regardless of type — submissions, comments, and tweets all feed into this. Training environment: Google Colab / Kaggle (T4 GPU free tier).
+- Top-20 keywords per account (TF-IDF)
+- Hashtag frequency vector, frequent bigrams
+- Cross-post fingerprinting (cosine sim of full post text across platforms)
+- Sentiment: VADER compound score + tone label (neutral / positive / aggressive / promotional), computed per account
 
-### 2.3 Temporal Module
+Endpoints:
+```
+GET /api/accounts/{id}/keywords    top keywords, hashtags, bigrams
+GET /api/accounts/{id}/sentiment   sentiment score + tone label
+```
 
-Posting cadence analysis: hour-of-day distribution, day-of-week distribution, inter-post intervals, activity burst patterns. Use `post.timestamp` (Unix epoch UTC). Compare two accounts' temporal fingerprints using histogram similarity (Jensen-Shannon divergence).
+### 2.3 Behaviour / Spike-Gap Module (MVP, new)
 
-### 2.4 Graph Intelligence Module (Layer 4 feeds into this)
+Rolling 7-day post count per account; flag windows with 3σ deviation from baseline as activity spikes or gaps. Writes `spike_flag` on `posts`.
 
-Graph Attention Network (GAT) on the follower/following social graph. Node embeddings feed back into the fusion model. Library: PyTorch Geometric.
+```
+GET /api/accounts/{id}/timeline       chronological post events with spike/gap flags
+GET /api/cases/{case_id}/timeline     merged timeline across all linked accounts in a case
+```
 
-### 2.5 Image Module
+### 2.4 Stylometric Module (STRETCH)
 
-CLIP embeddings for profile images + BLIP-generated captions. Use `profile.profile_image_url` — already 400×400 for Twitter; Redlib-proxied URL for Reddit. Frozen pretrained models — do NOT retrain.
+Siamese network on post text. Features: vocabulary richness, sentence length distribution, punctuation patterns, function word frequency, POS tag ratios. Train on PAN 2020 via Colab/Kaggle T4, target AUC > 0.75. **Fallback if not trained in time:** TF-IDF cosine similarity as the stylometric score.
+
+### 2.5 Image Module (STRETCH)
+
+CLIP embeddings for profile images + BLIP captions. Frozen pretrained models — do NOT retrain. If not built, image signal is omitted and weights renormalize (see MVP spec).
+
+### 2.6 Graph Intelligence Module (STRETCH — Layer 4)
+
+GAT on follower/following social graph (Foursquare-Twitter dataset, 496-node subset, trained once and checkpointed — never retrained during demo). Node embeddings feed back into fusion as a 6th feature.
 
 ---
 
-## Layer 3: Correlation Engine (NOT YET BUILT)
+## Layer 3: Correlation Engine
 
-Fusion model (XGBoost or MLP) that takes the 5 feature scores as input and outputs a linkage confidence score (0–1). Training target: labelled account pairs (same person vs. different person).
+**MVP**: weighted sum of available Layer 2 component scores → confidence 0–1 → band (Low/Medium/High). See spec above.
+
+**STRETCH**: XGBoost trained on 6 features (5 component scores + GAT embedding) → linkage probability 0–1.
+
+Candidate generation (both modes): rapidfuzz username filter (>0.40) + bio embedding threshold (>0.35) → top-10 candidates per seed account.
+
+```
+GET /api/cases/{case_id}/candidates   ranked candidate matches with confidence scores
+GET /api/evidence/{pair_id}           per-signal breakdown for a candidate pair
+GET /api/graph/{case_id}              social graph nodes + edges for React Flow (stretch — empty until Layer 4 built)
+```
 
 ---
 
-## Layer 5: Explainability (NOT YET BUILT)
+## Layer 5: Explainability
 
-SHAP `TreeExplainer` on the fusion model. Output: per-signal contribution breakdown displayed as bar charts in the frontend (Recharts).
+**MVP**: per-component score breakdown (see JSON shape in MVP spec) — same shape SHAP would produce, displayed as a horizontal bar chart with plain-English labels (e.g. "Writing Style Match: 91%").
 
-Research gap closed by ARIA: StyleLink (ICWSM 2025) does stylometry + GNN but has zero XAI component. ARIA adds full SHAP explainability to the pipeline.
+**STRETCH**: SHAP `TreeExplainer` on the trained XGBoost fusion model, same output shape, stored in `linkage_results.shap_json`.
+
+Research gap closed by ARIA: StyleLink (ICWSM 2025) does stylometry + GNN but has zero XAI component. ARIA adds explainability to the pipeline regardless of MVP/stretch path.
 
 ---
 
-## Frontend (ARIACollector.jsx — Layer 1 UI, BUILT)
+## Layer 6: Profiling + Report Generation (🔲 Not started, new)
 
-Dark-themed React component. Features:
-- Platform selector (Reddit / Twitter)
-- Username input + post limit selector
-- Collection log with typewriter effect
-- Profile card (avatar, display name, platform badge, bio, location)
-- Stat pills (karma, followers, following, post count)
-- Post feed with type filters (submission / comment / tweet)
-- Subreddit tag cloud (Reddit only)
-- Mock data mode for UI development without a live backend
+Aggregates all layer outputs into a suspect profile and generates an exportable SOCMINT report.
 
-The component calls `GET http://localhost:8000/collect/{platform}/{username}?limit={n}`. Falls back to `generateMockProfile()` silently if the backend is unreachable — for production, surface this error explicitly so investigators know they're seeing mock data.
+- Suspect profile: aggregated bio, all linked accounts with confidence, top keywords, sentiment summary, posting behaviour summary, network cluster summary (if Layer 4 built)
+- Report sections: case metadata, seed identifiers, discovered accounts, correlation logic per link, evidence breakdown, open-source references, confidence notes, limitations disclaimer
+- Confidence note auto-added if any signal is missing (e.g. "Image score unavailable — excluded, weights renormalized")
 
-Future layers will extend this UI with: ranked candidate matches panel, SHAP evidence breakdown (Recharts bar chart), and social graph visualisation (React Flow + D3.js).
+Endpoints:
+```
+GET /api/cases/{case_id}/report       structured SOCMINT report as JSON
+GET /api/cases/{case_id}/report/pdf   report as PDF (WeasyPrint)
+```
+
+**Fallback** if WeasyPrint dependency issues arise: serve JSON only, browser print-to-PDF. The JSON + investigator notes field is sufficient to demonstrate the feature.
+
+---
+
+## Frontend — 9 Screens
+
+| # | Screen | Status |
+|---|---|---|
+| 1 | Login / Register | 🔲 Not started |
+| 2 | Case Dashboard | 🔲 Not started |
+| 3 | New Case / Input (multi-identifier) | 🔲 Not started |
+| 4 | Processing Screen (7-layer progress) | 🔲 Not started |
+| 5 | Results Screen (ranked candidates) | 🔲 Not started |
+| 6 | Evidence Panel (score breakdown, keywords, tone, hashtags) | 🔲 Not started |
+| 7 | Graph View (React Flow) | 🔲 Not started |
+| 8 | Timeline View | 🔲 Not started |
+| 9 | Report Export Screen | 🔲 Not started |
+
+Screens 1–7 are mandatory. Screens 8–9 are high priority but may be simplified to static-render if time runs short.
+
+Current Layer 1 UI (`ARIACollector.jsx`) — platform selector, username input, collection log with typewriter effect, profile card, stat pills, post feed with type filters, subreddit tag cloud, mock data mode — will be integrated as a sub-view of the case detail screen rather than the primary entry point.
+
+**Note**: mock data mode currently fails silently if the backend is unreachable. For the case-centric version, surface this explicitly (e.g. a visible "Showing mock data — backend unreachable" banner) so investigators aren't misled during a live demo.
 
 ---
 
@@ -349,13 +552,19 @@ Future layers will extend this UI with: ranked candidate matches panel, SHAP evi
 
 3. **Twitter cookie expiry** — Cookies expire after ~2–3 weeks. Re-extract `ct0` and `auth_token` from browser DevTools when collection returns auth errors.
 
-4. **LinkedIn** — No stable public API. For the demo, use pre-crawled mock data stored directly in the DB, or Proxycurl API (paid, has free trial credits). Fields needed: name, headline, location, education (school/degree/year), work experience (company/role/years), skills.
+4. **LinkedIn** — No stable public API. For the demo, use pre-crawled mock data stored directly in the DB, labelled clearly in the UI as "Pre-loaded OSINT data". Fields needed: name, headline, location, education (school/degree/year), work experience (company/role/years), skills.
 
-5. **Reddit Redlib vs PRAW** — The implementation plan mentions PRAW, but the current collector uses Redlib (no credentials needed). Redlib HTML structure has been verified against v0.36.0 (June 2026). If Redlib's HTML changes, re-run `diagnose_redlib.py` and `diagnose_comments.py` to inspect current structure and update selectors in `RedditCollector.collect()`.
+5. **Reddit Redlib vs PRAW** — Current collector uses Redlib (no credentials needed). Redlib HTML structure verified against v0.36.0 (June 2026). If Redlib's HTML changes, re-run `diagnose_redlib.py` and `diagnose_comments.py` to inspect current structure and update selectors in `RedditCollector.collect()`.
 
 6. **`limit` is per-endpoint for Reddit** — `--limit 500` fetches up to 500 submissions AND up to 500 comments separately, so the total `posts` list can be up to 1000 entries. Adjust if you need a strict total cap.
 
-7. **Profile image is Redlib-proxied for Reddit** — `profile_image_url` for Reddit accounts points to the responding Redlib instance, not Reddit's CDN directly. This URL may break if that instance goes offline. For Layer 2 image processing, fetch and cache the image bytes immediately after collection.
+7. **Profile image is Redlib-proxied for Reddit** — `profile_image_url` for Reddit accounts points to the responding Redlib instance, not Reddit's CDN directly. This URL may break if that instance goes offline. For Layer 2 image processing (stretch), fetch and cache image bytes immediately after collection.
+
+8. **`accounts` is per-case** — same real-world account collected in two different cases creates two separate rows (see schema note above). `save_to_db()` now requires `case_id`; `ON CONFLICT` target is `(case_id, platform, username)`.
+
+9. **`linkage_results.shap_json` is dual-purpose** — holds either the MVP weighted-breakdown JSON or a real SHAP breakdown, both in the same per-signal shape. Frontend/report code should not assume SHAP-specific fields exist.
+
+10. **Sherlock/HIBP should be pre-run before demo** — store results in `osint_lookups`, demo from stored results rather than live calls (rate limits / latency risk).
 
 ---
 
@@ -363,10 +572,15 @@ Future layers will extend this UI with: ranked candidate matches panel, SHAP evi
 
 | Layer | Status | Owner |
 |---|---|---|
-| 1 — Data Collection | ✅ Built | Backend |
-| 2 — Feature Extraction | 🔲 Not started | ML + Backend |
-| 3 — Correlation Engine | 🔲 Not started | ML |
-| 4 — Graph Intelligence | 🔲 Not started | ML |
+| 0 — Auth + Case Management | 🔲 Not started | Backend |
+| 1 — Data Collection (incl. OSINT lookups) | ✅ Core built, case-scoped; OSINT lookups not started | Backend |
+| 2 — Feature Extraction (MVP: profile/content/behaviour) | 🔲 Not started | ML + Backend |
+| 2 — Feature Extraction (stretch: stylometry, image) | 🔲 Not started | ML |
+| 3 — Correlation Engine | 🔲 Not started | ML + Backend |
+| 4 — Graph Intelligence (stretch) | 🔲 Not started | ML |
 | 5 — Explainability | 🔲 Not started | Backend |
-| Auth / Case management | 🔲 Not started | Backend |
-| Full investigator UI | 🟡 Layer 1 UI done | Frontend |
+| 6 — Profiling + Report | 🔲 Not started | Backend |
+| Frontend — Screens 1–7 (mandatory) | 🟡 Layer 1 sub-view only | Frontend |
+| Frontend — Screens 8–9 (timeline, report) | 🔲 Not started | Frontend |
+
+**Build schedule**: Phase 1 (Foundation, Jun 12–17) → Phase 2 (ML/Correlation Core, Jun 18–24) → Phase 3 (Frontend + Viz, Jun 25–Jul 1) → Phase 4 (Polish + Demo Prep, Jul 2–3).

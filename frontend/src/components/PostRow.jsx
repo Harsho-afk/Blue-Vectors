@@ -3,8 +3,14 @@ import { useState } from "react";
 export default function PostRow({ post, index, visible }) {
   const [expanded, setExpanded] = useState(false);
 
-  const ts = post.timestamp
-    ? new Date(post.timestamp * 1000).toISOString().replace("T", " ").slice(0, 16) + "Z"
+  const rawTs = post.timestamp;
+  const ts = rawTs
+    ? (() => {
+        const d = typeof rawTs === "number"
+          ? new Date(rawTs * 1000)
+          : new Date(rawTs);
+        return isNaN(d.getTime()) ? "—" : d.toISOString().replace("T", " ").slice(0, 16) + "Z";
+      })()
     : "—";
 
   const type   = post.metadata?.type || "post";

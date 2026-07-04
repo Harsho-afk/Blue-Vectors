@@ -660,3 +660,512 @@ body {
   text-align: center;
   padding: 40px 0;
 }
+
+/* ── Navigation bar ──────────────────────── */
+.aria-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: #111318;
+  border-bottom: 1px solid #1E2229;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.aria-nav__brand {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #4FFFB0;
+}
+
+.aria-nav__user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.aria-nav__email {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #E2E8F0;
+}
+
+.aria-nav__logout {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  padding: 6px 12px;
+  background: #FF450012;
+  color: #FF4500;
+  border: 1px solid #FF450030;
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.aria-nav__logout:hover {
+  background: #FF450020;
+  border-color: #FF4500;
+}
+
+/* ── Auth page ───────────────────────────── */
+.aria-auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: #0A0B0D;
+}
+
+.aria-auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: #111318;
+  border: 1px solid #1E2229;
+  border-radius: 4px;
+  padding: 40px 32px;
+}
+
+.aria-auth-title {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #4FFFB0;
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.aria-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.aria-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aria-form-label {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #4A5568;
+  text-transform: uppercase;
+}
+
+.aria-form-input {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  background: #0A0B0D;
+  color: #E2E8F0;
+  border: 1px solid #1E2229;
+  border-radius: 3px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.aria-form-input:focus {
+  outline: none;
+  border-color: #4FFFB0;
+  background: #4FFFB008;
+}
+
+.aria-form-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.aria-form-input::placeholder {
+  color: #4A5568;
+}
+
+.aria-auth-button {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 12px 16px;
+  background: #4FFFB0;
+  color: #0A0B0D;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  margin-top: 8px;
+}
+
+.aria-auth-button:hover:not(:disabled) {
+  background: #5FFFC0;
+}
+
+.aria-auth-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.aria-auth-error {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  background: #FF450012;
+  border: 1px solid #FF450030;
+  border-radius: 3px;
+  color: #FF4500;
+  margin-bottom: 8px;
+}
+
+.aria-auth-footer {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #4A5568;
+  text-align: center;
+}
+
+.aria-auth-link {
+  color: #4FFFB0;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.aria-auth-link:hover {
+  color: #5FFFC0;
+  text-decoration: underline;
+}
+
+/* ── Loading states ──────────────────────── */
+.aria-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  color: #4A5568;
+}
+
+.aria-loading-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: #0A0B0D;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  color: #4A5568;
+}
+
+/* ── Case Dashboard ─────────────────────── */
+.dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.dash-header__title {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #4FFFB0;
+}
+
+.dash-header__new {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 10px 18px;
+  background: #4FFFB0;
+  color: #0A0B0D;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dash-header__new:hover { background: #5FFFC0; }
+
+/* ── Case list ──────────────────────────── */
+.case-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.case-row {
+  background: #111318;
+  border: 1px solid #2A3040;
+  border-radius: 6px;
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.case-row:hover {
+  border-color: #4FFFB0;
+  background: #4FFFB008;
+}
+
+.case-row__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.case-row__title {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #E2E8F0;
+}
+
+.case-row__status {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  border: 1px solid;
+}
+
+.case-row__status--open {
+  color: #4FFFB0;
+  border-color: #4FFFB033;
+  background: #4FFFB012;
+}
+
+.case-row__status--closed {
+  color: #6B7280;
+  border-color: #6B728033;
+  background: #6B728012;
+}
+
+.case-row__bottom {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.case-row__id,
+.case-row__date {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  letter-spacing: 0.5px;
+}
+
+/* ── New Case — identifier rows ─────────── */
+.id-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.id-row__select {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  background: #0A0B0D;
+  color: #E2E8F0;
+  border: 1px solid #1E2229;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.id-row__select:focus { border-color: #4FFFB0; outline: none; }
+
+.id-row__value { flex: 1; }
+
+.id-row__platform { width: 130px; flex-shrink: 0; }
+
+.id-row__remove {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  width: 32px;
+  height: 32px;
+  background: #FF450012;
+  color: #FF4500;
+  border: 1px solid #FF450030;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.id-row__remove:hover { background: #FF450020; }
+
+.id-row__add {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+  background: transparent;
+  color: #4FFFB0;
+  border: 1px dashed #4FFFB044;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.id-row__add:hover {
+  background: #4FFFB008;
+  border-color: #4FFFB0;
+}
+
+/* ── Case Detail ────────────────────────── */
+.back-link {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #4A5568;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 16px;
+  letter-spacing: 0.5px;
+  transition: color 0.15s;
+}
+
+.back-link:hover { color: #4FFFB0; }
+
+.case-header {
+  margin-bottom: 24px;
+}
+
+.case-header__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.case-header__title {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 20px;
+  font-weight: 700;
+  color: #4FFFB0;
+  letter-spacing: 1px;
+}
+
+.case-header__meta {
+  display: flex;
+  gap: 16px;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  letter-spacing: 0.5px;
+}
+
+/* ── Identifier list (detail view) ──────── */
+.id-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.id-list__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #161A22;
+  border: 1px solid #2A3040;
+  border-radius: 4px;
+}
+
+.id-list__type {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #6B7280;
+  letter-spacing: 1px;
+  min-width: 80px;
+}
+
+.id-list__value {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  color: #E2E8F0;
+  flex: 1;
+}
+
+.id-list__row .collect-btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 10px;
+}
+
+/* ── Section header (label + action) ────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+/* ── Add identifier form ────────────────── */
+.add-id-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #1E2229;
+}
+
+.add-id-form__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cancel-btn {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 6px 14px;
+  background: transparent;
+  color: #4A5568;
+  border: 1px solid #2A3040;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.cancel-btn:hover { color: #E2E8F0; border-color: #4A5568; }
+
+/* ── Account section spacing ────────────── */
+.account-section {
+  margin-bottom: 32px;
+}
+
+/* ── Show more / less button ────────────── */
+.show-more-btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #4FFFB0;
+  background: #4FFFB008;
+  border: 1px dashed #4FFFB044;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.show-more-btn:hover {
+  background: #4FFFB012;
+  border-color: #4FFFB0;
+}

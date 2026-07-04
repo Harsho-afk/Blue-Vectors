@@ -59,7 +59,8 @@ export default function ARIACollector() {
 
     try {
       const res = await fetch(
-        `http://localhost:8000/collect/${platform}/${encodeURIComponent(u)}?limit=${limit}`
+        `http://localhost:8000/collect/${platform}/${encodeURIComponent(u)}?limit=${limit}`,
+        { credentials: 'include' }
       );
       if (!res.ok) {
         const detail = await res.json().then(d => d.detail).catch(() => res.statusText);

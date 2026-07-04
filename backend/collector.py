@@ -712,7 +712,7 @@ async def _collect_twitter(username: str, limit: int) -> AccountProfile:
 # PostgreSQL storage helper
 # ──────────────────────────────────────────────
 
-def save_to_db(profile: AccountProfile, conn) -> int:
+def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
     """
     Upsert an AccountProfile into PostgreSQL.
     Run schema.sql first to create the required tables.
@@ -720,6 +720,7 @@ def save_to_db(profile: AccountProfile, conn) -> int:
     Args:
         profile : AccountProfile returned by collect()
         conn    : open psycopg2 connection
+        case_id : ID of the case this profile belongs to
 
     Returns:
         account_id of the inserted or updated row
@@ -734,9 +735,9 @@ def save_to_db(profile: AccountProfile, conn) -> int:
     cur.execute(
         """
         INSERT INTO accounts
-            (platform, username, display_name, bio, location, created_at, profile_image_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (platform, username) DO UPDATE SET
+            (case_id, platform, username, display_name, bio, location, created_at, profile_image_url)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (case_id, platform, username) DO UPDATE SET
             display_name      = EXCLUDED.display_name,
             bio               = EXCLUDED.bio,
             location          = EXCLUDED.location,
@@ -744,6 +745,7 @@ def save_to_db(profile: AccountProfile, conn) -> int:
         RETURNING id
         """,
         (
+            case_id,
             profile.platform,
             profile.username,
             profile.display_name,
@@ -768,8 +770,8 @@ def save_to_db(profile: AccountProfile, conn) -> int:
 
     conn.commit()
     log.info(
-        "DB: saved account_id=%d (%s/%s)",
-        account_id, profile.platform, profile.username,
+        "DB: saved account_id=%d (%s/%s) under case_id=%d",
+        account_id, profile.platform, profile.username, case_id,
     )
     return account_id
 

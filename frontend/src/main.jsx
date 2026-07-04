@@ -1,9 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import ARIACollector from "./components/ARIACollector";
+import App from "./App";
+import { AuthProvider } from "./contexts/AuthContext";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <ARIACollector />
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </StrictMode>
 );

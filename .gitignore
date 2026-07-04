@@ -1,1 +1,7 @@
-__pycache__
+__pycache__/
+*.pyc
+.env
+cookies.txt
+backend/aria.db
+node_modules/
+dist/

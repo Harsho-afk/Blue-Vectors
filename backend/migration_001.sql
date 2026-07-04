@@ -1,5 +1,5 @@
--- ARIA PostgreSQL schema
--- Run once to initialize the database: psql -d aria -f schema.sql
+-- ARIA Migration 001: Case-centric Database Schema
+-- Run order: users -> cases -> case_identifiers -> osint_lookups -> ALTER accounts -> ALTER posts -> linkage_results
 
 -- 1. users
 CREATE TABLE IF NOT EXISTS users (
@@ -47,35 +47,20 @@ CREATE TABLE IF NOT EXISTS osint_lookups (
 
 CREATE INDEX IF NOT EXISTS osint_lookups_case_id_idx ON osint_lookups(case_id);
 
--- 5. accounts
-CREATE TABLE IF NOT EXISTS accounts (
-    id                SERIAL PRIMARY KEY,
-    case_id           INTEGER REFERENCES cases(id) ON DELETE CASCADE,
-    platform          TEXT        NOT NULL,
-    username          TEXT        NOT NULL,
-    display_name      TEXT,
-    bio               TEXT,
-    location          TEXT,
-    created_at        TIMESTAMPTZ,
-    profile_image_url TEXT,
-    UNIQUE (case_id, platform, username)
-);
+-- 5. ALTER accounts
+ALTER TABLE accounts ADD COLUMN case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE;
+
+-- Drop the old UNIQUE constraint on (platform, username)
+-- Use IF EXISTS for safer execution if constraint names vary
+ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_platform_username_key;
+
+-- Add the new UNIQUE constraint on (case_id, platform, username)
+ALTER TABLE accounts ADD CONSTRAINT accounts_case_platform_username_key UNIQUE (case_id, platform, username);
 
 CREATE INDEX IF NOT EXISTS accounts_case_id_idx ON accounts(case_id);
 
--- 6. posts
-CREATE TABLE IF NOT EXISTS posts (
-    id         SERIAL PRIMARY KEY,
-    account_id INTEGER     NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    text       TEXT,
-    timestamp  TIMESTAMPTZ NOT NULL,
-    metadata   JSONB,
-    spike_flag BOOLEAN     NOT NULL DEFAULT false,
-    UNIQUE (account_id, timestamp, text)
-);
-
-CREATE INDEX IF NOT EXISTS posts_account_id_idx ON posts(account_id);
-CREATE INDEX IF NOT EXISTS posts_timestamp_idx  ON posts(timestamp);
+-- 6. ALTER posts
+ALTER TABLE posts ADD COLUMN spike_flag BOOLEAN NOT NULL DEFAULT false;
 
 -- 7. linkage_results
 CREATE TABLE IF NOT EXISTS linkage_results (
