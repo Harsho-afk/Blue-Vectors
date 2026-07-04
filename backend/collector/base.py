@@ -104,7 +104,12 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
 SUPPORTED_PLATFORMS = ("reddit", "twitter", "github", "instagram")
 
 
-def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
+def collect(
+    platform: str,
+    username: str,
+    limit: int = 100,
+    include_social_graph: bool = True,
+) -> AccountProfile:
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
         raise ValueError(
@@ -113,16 +118,21 @@ def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
     if platform == "reddit":
         return RedditCollector().collect(username, limit=limit)
     if platform == "twitter":
-        return asyncio.run(collect_twitter(username, limit))
+        return asyncio.run(collect_twitter(username, limit, include_social_graph))
     if platform == "github":
         return GitHubCollector().collect(username, limit=limit)
     if platform == "instagram":
-        return InstagramCollector().collect(username, limit=limit)
+        return InstagramCollector().collect(
+            username, limit=limit, include_social_graph=include_social_graph
+        )
     raise ValueError(f"Unhandled platform: {platform}")
 
 
 async def collect_async(
-    platform: str, username: str, limit: int = 100
+    platform: str,
+    username: str,
+    limit: int = 100,
+    include_social_graph: bool = True,
 ) -> AccountProfile:
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
@@ -135,7 +145,7 @@ async def collect_async(
             None, lambda: RedditCollector().collect(username, limit=limit)
         )
     if platform == "twitter":
-        return await collect_twitter(username, limit)
+        return await collect_twitter(username, limit, include_social_graph)
     if platform == "github":
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -146,11 +156,18 @@ async def collect_async(
         # so it doesn't block FastAPI's event loop, same pattern as Reddit/GitHub.
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, lambda: InstagramCollector().collect(username, limit=limit)
+            None,
+            lambda: InstagramCollector().collect(
+                username, limit=limit, include_social_graph=include_social_graph
+            ),
         )
     raise ValueError(f"Unhandled platform: {platform}")
 
 
-async def collect_twitter(username: str, limit: int) -> AccountProfile:
+async def collect_twitter(
+    username: str, limit: int, include_social_graph: bool = True
+) -> AccountProfile:
     collector = TwitterCollector()
-    return await collector.collect(username, limit=limit)
+    return await collector.collect(
+        username, limit=limit, include_social_graph=include_social_graph
+    )

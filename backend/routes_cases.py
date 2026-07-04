@@ -33,6 +33,7 @@ class CollectRequest(BaseModel):
     platform: Literal["reddit", "twitter", "github", "instagram"]
     username: str
     limit: int = Field(default=50, ge=1, le=500)
+    include_social_graph: bool = True
 
 
 class CaseResponse(BaseModel):
@@ -657,7 +658,12 @@ async def collect_for_case(
         conn.close()
 
     try:
-        profile = await collect_async(body.platform, body.username, limit=body.limit)
+        profile = await collect_async(
+            body.platform,
+            body.username,
+            limit=body.limit,
+            include_social_graph=body.include_social_graph,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

@@ -209,6 +209,19 @@ function platformHandle(platform: string, username: string) {
   }
 }
 
+function networkProfileUrl(platform: string, login: string) {
+  switch (platform) {
+    case 'twitter':
+      return `https://x.com/${login}`
+    case 'instagram':
+      return `https://www.instagram.com/${login}/`
+    case 'github':
+      return `https://github.com/${login}`
+    default:
+      return `https://reddit.com/u/${login}`
+  }
+}
+
 // ── Add-Identifier Row Type ──
 
 interface IdRow {
@@ -321,7 +334,11 @@ function CaseDetail() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ platform, username: identifier.value }),
+        body: JSON.stringify({
+          platform,
+          username: identifier.value,
+          include_social_graph: true,
+        }),
       })
       if (!res.ok) {
         const err = await res
@@ -1512,9 +1529,10 @@ function ProfilesTab({
               </CardContent>
             </Card>
 
-            {/* GitHub Network Panel */}
-            {acc.platform === 'github' && hasNetwork && (
+            {/* Network Panel (followers/following) */}
+            {hasNetwork && (
               <NetworkPanel
+                platform={acc.platform}
                 followers={networkFollowers}
                 following={networkFollowing}
                 search={networkSearch}
@@ -1724,6 +1742,7 @@ function PostRow({
 }
 
 function NetworkPanel({
+  platform,
   followers,
   following,
   search,
@@ -1731,6 +1750,7 @@ function NetworkPanel({
   onSearchChange,
   onTabChange,
 }: {
+  platform: string
   followers: Post | undefined
   following: Post | undefined
   search: string
@@ -1753,7 +1773,9 @@ function NetworkPanel({
         <CollapsibleTrigger asChild>
           <CardHeader className='cursor-pointer pb-3'>
             <div className='flex items-center justify-between'>
-              <CardTitle className='text-sm'>GitHub Network</CardTitle>
+              <CardTitle className='text-sm'>
+                {capitalize(platform)} Network
+              </CardTitle>
               <ChevronDown className='h-4 w-4 text-muted-foreground' />
             </div>
           </CardHeader>
@@ -1813,7 +1835,7 @@ function NetworkPanel({
                   {filtered.map((login) => (
                     <a
                       key={login}
-                      href={`https://github.com/${login}`}
+                      href={networkProfileUrl(platform, login)}
                       target='_blank'
                       rel='noopener noreferrer'
                       className='truncate rounded px-1.5 py-0.5 font-mono text-xs text-primary hover:bg-muted hover:underline'

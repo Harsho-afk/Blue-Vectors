@@ -33,6 +33,14 @@ from .models import AccountProfile, Post, log
 #
 # INSTALL:
 #   pip install "instagrapi[curl]"
+#
+# DATA RETENTION POLICY FOR THIS COLLECTOR:
+#   Every field instagrapi's pydantic models expose for profile/media/user
+#   objects is captured somewhere in AccountProfile/Post — nothing fetched
+#   is silently discarded. Network posts (followers/following) keep the
+#   original GitHub-style "logins" (list[str]) for frontend compatibility,
+#   PLUS a parallel "users" field with the full per-account dict, so no
+#   detail is lost even though only usernames render today.
 # ---------------------------------------------------------------------------
 
 _NOT_CONFIGURED = (
@@ -75,6 +83,45 @@ def _build_client() -> Client:
     return cl
 
 
+def _user_short_to_dict(user_short) -> dict:
+    """
+    Normalize instagrapi's UserShort into a plain dict.
+    Used for post usertags AND the rich "users" side of network posts.
+    """
+    return {
+        "pk":              str(getattr(user_short, "pk", "") or ""),
+        "username":        getattr(user_short, "username", "") or "",
+        "full_name":       getattr(user_short, "full_name", "") or "",
+        "profile_pic_url": str(getattr(user_short, "profile_pic_url", "") or ""),
+        "is_private":      getattr(user_short, "is_private", None),
+        "is_verified":     getattr(user_short, "is_verified", None),
+    }
+
+
+def _location_to_dict(location) -> dict | None:
+    """Normalize instagrapi's Location model — keep every field, not just name."""
+    if not location:
+        return None
+    return {
+        "pk":          getattr(location, "pk", None),
+        "name":        getattr(location, "name", "") or "",
+        "address":     getattr(location, "address", "") or "",
+        "lng":         getattr(location, "lng", None),
+        "lat":         getattr(location, "lat", None),
+        "external_id": getattr(location, "external_id", None),
+        "external_id_source": getattr(location, "external_id_source", None),
+    }
+
+
+def _usertag_to_dict(tag) -> dict:
+    """Normalize instagrapi's Usertag — keeps the (x, y) position, not just the user."""
+    return {
+        **_user_short_to_dict(tag.user),
+        "x": getattr(tag, "x", None),
+        "y": getattr(tag, "y", None),
+    }
+
+
 class InstagramCollector:
     """
     Collects public Instagram profile + post metadata via instagrapi.
@@ -89,7 +136,118 @@ class InstagramCollector:
             return
         self._client = _build_client()
 
-    def collect(self, username: str, limit: int = 100) -> AccountProfile:
+    def _collect_social_graph(
+        self,
+        username: str,
+        user_id,
+        is_private: bool,
+        follower_count: int | None,
+        following_count: int | None,
+        follower_limit: int = 200,
+        following_limit: int = 200,
+    ) -> list[Post]:
+        """
+        Fetches followers/following and returns them as synthetic "network"
+        Posts — same schema as GithubCollector's network posts (type,
+        direction, logins, total_count, fetched_count), so the frontend's
+        NetworkPanel renders them unmodified. Also attaches a parallel
+        "users" field with full per-account detail (pk, full_name,
+        profile_pic_url, is_private, is_verified) so nothing instagrapi
+        returned is thrown away, even though only usernames render today.
+
+        Capped by follower_limit/following_limit (default 200 each) via
+        instagrapi's `amount` param — without a cap, a large account (e.g.
+        a brand with millions of followers) would try to paginate its
+        entire follower list, which is impractically slow and gets rate
+        limited almost immediately.
+
+        Skipped automatically for private accounts (same restriction as posts).
+        Can raise ValueError on rate limit / client errors, same pattern as
+        the rest of the collector, so callers can decide whether to treat
+        it as fatal or degrade gracefully.
+        """
+        cl = self._client
+
+        if is_private:
+            log.info(
+                "Instagram: @%s is private — skipping follower/following graph.",
+                username,
+            )
+            return []
+
+        try:
+            followers_raw = cl.user_followers(user_id, amount=follower_limit)
+            following_raw = cl.user_following(user_id, amount=following_limit)
+        except PrivateAccount:
+            log.warning("Instagram: @%s private — no social graph collected.", username)
+            return []
+        except RateLimitError as exc:
+            raise ValueError(
+                f"Instagram: rate limited fetching followers/following for @{username}. "
+                "Wait a few minutes before retrying."
+            ) from exc
+        except ClientError as exc:
+            raise ValueError(
+                f"Instagram: error fetching social graph for @{username} — {exc}"
+            ) from exc
+
+        follower_users  = [_user_short_to_dict(u) for u in followers_raw.values()]
+        following_users = [_user_short_to_dict(u) for u in following_raw.values()]
+        follower_logins  = [u["username"] for u in follower_users if u["username"]]
+        following_logins = [u["username"] for u in following_users if u["username"]]
+
+        network_posts: list[Post] = []
+
+        if follower_logins:
+            network_posts.append(Post(
+                external_id=f"network:followers:{username}",
+                text=f"Followed by {len(follower_logins)} accounts: "
+                     + ", ".join(follower_logins),
+                timestamp=0.0,
+                metadata={
+                    "type": "network",
+                    "direction": "followers",
+                    "logins": follower_logins,
+                    "users": follower_users,
+                    "total_count": follower_count,
+                    "fetched_count": len(follower_logins),
+                    "url": f"https://www.instagram.com/{username}/",
+                    "images": [],
+                },
+            ))
+
+        if following_logins:
+            network_posts.append(Post(
+                external_id=f"network:following:{username}",
+                text=f"Following {len(following_logins)} accounts: "
+                     + ", ".join(following_logins),
+                timestamp=0.0,
+                metadata={
+                    "type": "network",
+                    "direction": "following",
+                    "logins": following_logins,
+                    "users": following_users,
+                    "total_count": following_count,
+                    "fetched_count": len(following_logins),
+                    "url": f"https://www.instagram.com/{username}/",
+                    "images": [],
+                },
+            ))
+
+        log.info(
+            "Instagram ✓: @%s — %d followers, %d following collected",
+            username, len(follower_logins), len(following_logins),
+        )
+        return network_posts
+
+    def collect(
+        self,
+        username: str,
+        limit: int = 100,
+        include_social_graph: bool = True,
+        follower_limit: int = 200,
+        following_limit: int = 200,
+    ) -> AccountProfile:
         username = username.strip().lstrip("@")
         self._ensure_client()
         cl = self._client
@@ -165,24 +323,69 @@ class InstagramCollector:
 
             shortcode = media.code or str(media.pk)
 
+            # Accounts tagged in the post — keeps (x, y) position, not just identity
+            tagged_accounts: list[dict] = []
+            try:
+                for tag in getattr(media, "usertags", None) or []:
+                    tagged_accounts.append(_usertag_to_dict(tag))
+            except Exception:
+                pass
+
+            # Per-slide data for carousels — resource-level usertags/media types
+            # would otherwise be lost since only the top-level media surfaces above.
+            carousel_resources: list[dict] = []
+            try:
+                for r in getattr(media, "resources", None) or []:
+                    carousel_resources.append({
+                        "pk":            str(getattr(r, "pk", "") or ""),
+                        "media_type":    getattr(r, "media_type", None),
+                        "thumbnail_url": str(getattr(r, "thumbnail_url", "") or ""),
+                        "video_url":     str(getattr(r, "video_url", "") or "") or None,
+                        "usertags": [
+                            _usertag_to_dict(t) for t in (getattr(r, "usertags", None) or [])
+                        ],
+                    })
+            except Exception:
+                pass
+
             posts.append(Post(
                 external_id=shortcode,
                 text=media.caption_text or "",
                 timestamp=media.taken_at.timestamp() if media.taken_at else 0.0,
                 metadata={
-                    "type":             ptype,
-                    "url":              f"https://www.instagram.com/p/{shortcode}/",
-                    "images":           images,
-                    "is_video":         media_type == 2,
-                    "like_count":       media.like_count,
-                    "comment_count":    media.comment_count,
-                    "video_view_count": getattr(media, "view_count", None) if media_type == 2 else None,
-                    "location":         media.location.name if media.location else None,
+                    "type":                  ptype,
+                    "pk":                    str(getattr(media, "pk", "") or ""),
+                    "id":                    getattr(media, "id", None),
+                    "product_type":          getattr(media, "product_type", "") or "",
+                    "url":                   f"https://www.instagram.com/p/{shortcode}/",
+                    "images":                images,
+                    "is_video":              media_type == 2,
+                    "video_url":             str(getattr(media, "video_url", "") or "") or None,
+                    "video_duration":        getattr(media, "video_duration", None),
+                    "title":                 getattr(media, "title", "") or "",
+                    "like_count":            media.like_count,
+                    "comment_count":         media.comment_count,
+                    "video_view_count":      getattr(media, "view_count", None) if media_type == 2 else None,
+                    "play_count":            getattr(media, "play_count", None),
+                    "location":              media.location.name if media.location else None,
+                    "location_detail":       _location_to_dict(media.location),
                     "accessibility_caption": getattr(media, "accessibility_caption", None),
+                    "tagged_accounts":       tagged_accounts,
+                    "carousel_resources":    carousel_resources,
                 },
             ))
 
-        posts.sort(key=lambda p: p.timestamp, reverse=True)
+        # ── Social graph (opt-in — costs extra requests, so off by default) ──
+        network_posts: list[Post] = []
+        if include_social_graph:
+            network_posts = self._collect_social_graph(
+                username, user_id, user.is_private,
+                user.follower_count, user.following_count,
+                follower_limit, following_limit,
+            )
+
+        all_posts = posts + network_posts
+        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
         log.info(
             "Instagram ✓: @%s — %d posts collected (private=%s)",
             username, len(posts), user.is_private,
@@ -196,8 +399,14 @@ class InstagramCollector:
             location="",
             profile_image_url=str(user.profile_pic_url) if user.profile_pic_url else "",
             created_utc=None,
-            posts=posts,
+            posts=all_posts,
             follower_count=user.follower_count,
             following_count=user.following_count,
-            extra={"is_private": user.is_private},
+            extra={
+                "is_private":   user.is_private,
+                "is_verified":  getattr(user, "is_verified", None),
+                "is_business":  getattr(user, "is_business", None),
+                "media_count":  getattr(user, "media_count", None),
+                "external_url": str(getattr(user, "external_url", "") or "") or None,
+            },
         )
