@@ -1,0 +1,241 @@
+{
+  "_comment": "Geographic subreddit → region mapping. Used by Network Geography (function 2). Format: subreddit_lowercase → { region, country_code }. Expand as needed.",
+
+  "india": {"region": "India", "country_code": "IN"},
+  "indiaspeaks": {"region": "India", "country_code": "IN"},
+  "indianews": {"region": "India", "country_code": "IN"},
+  "indiangaming": {"region": "India", "country_code": "IN"},
+  "indiadiscussion": {"region": "India", "country_code": "IN"},
+  "bollywood": {"region": "India", "country_code": "IN"},
+  "tollywood": {"region": "India", "country_code": "IN"},
+  "indianfood": {"region": "India", "country_code": "IN"},
+  "cricket": {"region": "India/South Asia", "country_code": "IN"},
+  "bangalore": {"region": "Bangalore, India", "country_code": "IN"},
+  "bengaluru": {"region": "Bangalore, India", "country_code": "IN"},
+  "mumbai": {"region": "Mumbai, India", "country_code": "IN"},
+  "delhi": {"region": "Delhi, India", "country_code": "IN"},
+  "chennai": {"region": "Chennai, India", "country_code": "IN"},
+  "hyderabad": {"region": "Hyderabad, India", "country_code": "IN"},
+  "kolkata": {"region": "Kolkata, India", "country_code": "IN"},
+  "pune": {"region": "Pune, India", "country_code": "IN"},
+  "ahmedabad": {"region": "Ahmedabad, India", "country_code": "IN"},
+  "jaipur": {"region": "Jaipur, India", "country_code": "IN"},
+  "kerala": {"region": "Kerala, India", "country_code": "IN"},
+  "tamilnadu": {"region": "Tamil Nadu, India", "country_code": "IN"},
+  "karnataka": {"region": "Karnataka, India", "country_code": "IN"},
+  "maharashtra": {"region": "Maharashtra, India", "country_code": "IN"},
+  "gujarat": {"region": "Gujarat, India", "country_code": "IN"},
+  "rajasthan": {"region": "Rajasthan, India", "country_code": "IN"},
+  "westbengal": {"region": "West Bengal, India", "country_code": "IN"},
+  "goa": {"region": "Goa, India", "country_code": "IN"},
+  "lucknow": {"region": "Lucknow, India", "country_code": "IN"},
+  "chandigarh": {"region": "Chandigarh, India", "country_code": "IN"},
+  "developersIndia": {"region": "India", "country_code": "IN"},
+
+  "unitedkingdom": {"region": "United Kingdom", "country_code": "GB"},
+  "casualuk": {"region": "United Kingdom", "country_code": "GB"},
+  "askuk": {"region": "United Kingdom", "country_code": "GB"},
+  "britishproblems": {"region": "United Kingdom", "country_code": "GB"},
+  "london": {"region": "London, UK", "country_code": "GB"},
+  "manchester": {"region": "Manchester, UK", "country_code": "GB"},
+  "birmingham": {"region": "Birmingham, UK", "country_code": "GB"},
+  "edinburgh": {"region": "Edinburgh, UK", "country_code": "GB"},
+  "glasgow": {"region": "Glasgow, UK", "country_code": "GB"},
+  "bristol": {"region": "Bristol, UK", "country_code": "GB"},
+  "liverpool": {"region": "Liverpool, UK", "country_code": "GB"},
+  "scotland": {"region": "Scotland, UK", "country_code": "GB"},
+  "wales": {"region": "Wales, UK", "country_code": "GB"},
+  "northernireland": {"region": "Northern Ireland, UK", "country_code": "GB"},
+
+  "usa": {"region": "United States", "country_code": "US"},
+  "askanamerican": {"region": "United States", "country_code": "US"},
+  "nyc": {"region": "New York City, US", "country_code": "US"},
+  "newyorkcity": {"region": "New York City, US", "country_code": "US"},
+  "losangeles": {"region": "Los Angeles, US", "country_code": "US"},
+  "chicago": {"region": "Chicago, US", "country_code": "US"},
+  "sanfrancisco": {"region": "San Francisco, US", "country_code": "US"},
+  "bayarea": {"region": "San Francisco Bay Area, US", "country_code": "US"},
+  "seattle": {"region": "Seattle, US", "country_code": "US"},
+  "boston": {"region": "Boston, US", "country_code": "US"},
+  "austin": {"region": "Austin, US", "country_code": "US"},
+  "houston": {"region": "Houston, US", "country_code": "US"},
+  "dallas": {"region": "Dallas, US", "country_code": "US"},
+  "denver": {"region": "Denver, US", "country_code": "US"},
+  "portland": {"region": "Portland, US", "country_code": "US"},
+  "philadelphia": {"region": "Philadelphia, US", "country_code": "US"},
+  "washingtondc": {"region": "Washington DC, US", "country_code": "US"},
+  "miami": {"region": "Miami, US", "country_code": "US"},
+  "atlanta": {"region": "Atlanta, US", "country_code": "US"},
+  "sandiego": {"region": "San Diego, US", "country_code": "US"},
+  "minnesota": {"region": "Minnesota, US", "country_code": "US"},
+  "florida": {"region": "Florida, US", "country_code": "US"},
+  "california": {"region": "California, US", "country_code": "US"},
+  "texas": {"region": "Texas, US", "country_code": "US"},
+  "ohio": {"region": "Ohio, US", "country_code": "US"},
+  "michigan": {"region": "Michigan, US", "country_code": "US"},
+  "newjersey": {"region": "New Jersey, US", "country_code": "US"},
+  "virginia": {"region": "Virginia, US", "country_code": "US"},
+  "georgia": {"region": "Georgia, US", "country_code": "US"},
+  "colorado": {"region": "Colorado, US", "country_code": "US"},
+  "oregon": {"region": "Oregon, US", "country_code": "US"},
+  "massachusetts": {"region": "Massachusetts, US", "country_code": "US"},
+  "illinois": {"region": "Illinois, US", "country_code": "US"},
+  "washingtonstate": {"region": "Washington State, US", "country_code": "US"},
+  "newyork": {"region": "New York State, US", "country_code": "US"},
+
+  "canada": {"region": "Canada", "country_code": "CA"},
+  "toronto": {"region": "Toronto, Canada", "country_code": "CA"},
+  "vancouver": {"region": "Vancouver, Canada", "country_code": "CA"},
+  "montreal": {"region": "Montreal, Canada", "country_code": "CA"},
+  "ottawa": {"region": "Ottawa, Canada", "country_code": "CA"},
+  "calgary": {"region": "Calgary, Canada", "country_code": "CA"},
+  "edmonton": {"region": "Edmonton, Canada", "country_code": "CA"},
+  "ontario": {"region": "Ontario, Canada", "country_code": "CA"},
+  "britishcolumbia": {"region": "British Columbia, Canada", "country_code": "CA"},
+  "alberta": {"region": "Alberta, Canada", "country_code": "CA"},
+  "quebec": {"region": "Quebec, Canada", "country_code": "CA"},
+
+  "australia": {"region": "Australia", "country_code": "AU"},
+  "sydney": {"region": "Sydney, Australia", "country_code": "AU"},
+  "melbourne": {"region": "Melbourne, Australia", "country_code": "AU"},
+  "brisbane": {"region": "Brisbane, Australia", "country_code": "AU"},
+  "perth": {"region": "Perth, Australia", "country_code": "AU"},
+  "adelaide": {"region": "Adelaide, Australia", "country_code": "AU"},
+
+  "germany": {"region": "Germany", "country_code": "DE"},
+  "de": {"region": "Germany", "country_code": "DE"},
+  "berlin": {"region": "Berlin, Germany", "country_code": "DE"},
+  "munich": {"region": "Munich, Germany", "country_code": "DE"},
+  "hamburg": {"region": "Hamburg, Germany", "country_code": "DE"},
+  "frankfurt": {"region": "Frankfurt, Germany", "country_code": "DE"},
+
+  "france": {"region": "France", "country_code": "FR"},
+  "paris": {"region": "Paris, France", "country_code": "FR"},
+  "lyon": {"region": "Lyon, France", "country_code": "FR"},
+
+  "netherlands": {"region": "Netherlands", "country_code": "NL"},
+  "amsterdam": {"region": "Amsterdam, Netherlands", "country_code": "NL"},
+  "thenetherlands": {"region": "Netherlands", "country_code": "NL"},
+
+  "japan": {"region": "Japan", "country_code": "JP"},
+  "tokyo": {"region": "Tokyo, Japan", "country_code": "JP"},
+  "japanlife": {"region": "Japan", "country_code": "JP"},
+
+  "korea": {"region": "South Korea", "country_code": "KR"},
+  "seoul": {"region": "Seoul, South Korea", "country_code": "KR"},
+
+  "singapore": {"region": "Singapore", "country_code": "SG"},
+
+  "philippines": {"region": "Philippines", "country_code": "PH"},
+
+  "malaysia": {"region": "Malaysia", "country_code": "MY"},
+
+  "indonesia": {"region": "Indonesia", "country_code": "ID"},
+  "jakarta": {"region": "Jakarta, Indonesia", "country_code": "ID"},
+
+  "thailand": {"region": "Thailand", "country_code": "TH"},
+  "bangkok": {"region": "Bangkok, Thailand", "country_code": "TH"},
+
+  "vietnam": {"region": "Vietnam", "country_code": "VN"},
+
+  "brazil": {"region": "Brazil", "country_code": "BR"},
+  "saopaulo": {"region": "São Paulo, Brazil", "country_code": "BR"},
+  "riodejaneiro": {"region": "Rio de Janeiro, Brazil", "country_code": "BR"},
+
+  "mexico": {"region": "Mexico", "country_code": "MX"},
+  "mexicocity": {"region": "Mexico City, Mexico", "country_code": "MX"},
+
+  "argentina": {"region": "Argentina", "country_code": "AR"},
+  "buenosaires": {"region": "Buenos Aires, Argentina", "country_code": "AR"},
+
+  "colombia": {"region": "Colombia", "country_code": "CO"},
+  "bogota": {"region": "Bogotá, Colombia", "country_code": "CO"},
+
+  "chile": {"region": "Chile", "country_code": "CL"},
+  "santiago": {"region": "Santiago, Chile", "country_code": "CL"},
+
+  "southafrica": {"region": "South Africa", "country_code": "ZA"},
+  "capetown": {"region": "Cape Town, South Africa", "country_code": "ZA"},
+  "johannesburg": {"region": "Johannesburg, South Africa", "country_code": "ZA"},
+
+  "nigeria": {"region": "Nigeria", "country_code": "NG"},
+  "kenya": {"region": "Kenya", "country_code": "KE"},
+  "egypt": {"region": "Egypt", "country_code": "EG"},
+
+  "turkey": {"region": "Turkey", "country_code": "TR"},
+  "istanbul": {"region": "Istanbul, Turkey", "country_code": "TR"},
+
+  "israel": {"region": "Israel", "country_code": "IL"},
+  "telaviv": {"region": "Tel Aviv, Israel", "country_code": "IL"},
+
+  "saudiarabia": {"region": "Saudi Arabia", "country_code": "SA"},
+  "dubai": {"region": "Dubai, UAE", "country_code": "AE"},
+  "uae": {"region": "UAE", "country_code": "AE"},
+
+  "pakistan": {"region": "Pakistan", "country_code": "PK"},
+  "karachi": {"region": "Karachi, Pakistan", "country_code": "PK"},
+  "lahore": {"region": "Lahore, Pakistan", "country_code": "PK"},
+  "islamabad": {"region": "Islamabad, Pakistan", "country_code": "PK"},
+
+  "bangladesh": {"region": "Bangladesh", "country_code": "BD"},
+  "dhaka": {"region": "Dhaka, Bangladesh", "country_code": "BD"},
+
+  "srilanka": {"region": "Sri Lanka", "country_code": "LK"},
+  "nepal": {"region": "Nepal", "country_code": "NP"},
+
+  "ireland": {"region": "Ireland", "country_code": "IE"},
+  "dublin": {"region": "Dublin, Ireland", "country_code": "IE"},
+
+  "sweden": {"region": "Sweden", "country_code": "SE"},
+  "stockholm": {"region": "Stockholm, Sweden", "country_code": "SE"},
+
+  "norway": {"region": "Norway", "country_code": "NO"},
+  "oslo": {"region": "Oslo, Norway", "country_code": "NO"},
+
+  "denmark": {"region": "Denmark", "country_code": "DK"},
+  "copenhagen": {"region": "Copenhagen, Denmark", "country_code": "DK"},
+
+  "finland": {"region": "Finland", "country_code": "FI"},
+  "helsinki": {"region": "Helsinki, Finland", "country_code": "FI"},
+
+  "poland": {"region": "Poland", "country_code": "PL"},
+  "warsaw": {"region": "Warsaw, Poland", "country_code": "PL"},
+  "krakow": {"region": "Krakow, Poland", "country_code": "PL"},
+
+  "italy": {"region": "Italy", "country_code": "IT"},
+  "rome": {"region": "Rome, Italy", "country_code": "IT"},
+  "milan": {"region": "Milan, Italy", "country_code": "IT"},
+
+  "spain": {"region": "Spain", "country_code": "ES"},
+  "madrid": {"region": "Madrid, Spain", "country_code": "ES"},
+  "barcelona": {"region": "Barcelona, Spain", "country_code": "ES"},
+
+  "portugal": {"region": "Portugal", "country_code": "PT"},
+  "lisbon": {"region": "Lisbon, Portugal", "country_code": "PT"},
+
+  "switzerland": {"region": "Switzerland", "country_code": "CH"},
+  "zurich": {"region": "Zurich, Switzerland", "country_code": "CH"},
+
+  "austria": {"region": "Austria", "country_code": "AT"},
+  "vienna": {"region": "Vienna, Austria", "country_code": "AT"},
+
+  "belgium": {"region": "Belgium", "country_code": "BE"},
+  "brussels": {"region": "Brussels, Belgium", "country_code": "BE"},
+
+  "czech": {"region": "Czech Republic", "country_code": "CZ"},
+  "czechrepublic": {"region": "Czech Republic", "country_code": "CZ"},
+  "prague": {"region": "Prague, Czech Republic", "country_code": "CZ"},
+
+  "romania": {"region": "Romania", "country_code": "RO"},
+  "bucharest": {"region": "Bucharest, Romania", "country_code": "RO"},
+
+  "ukraine": {"region": "Ukraine", "country_code": "UA"},
+  "kyiv": {"region": "Kyiv, Ukraine", "country_code": "UA"},
+
+  "russia": {"region": "Russia", "country_code": "RU"},
+  "moscow": {"region": "Moscow, Russia", "country_code": "RU"},
+
+  "newzealand": {"region": "New Zealand", "country_code": "NZ"},
+  "auckland": {"region": "Auckland, New Zealand", "country_code": "NZ"},
+  "wellington": {"region": "Wellington, New Zealand", "country_code": "NZ"}
+}

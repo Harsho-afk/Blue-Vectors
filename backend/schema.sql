@@ -114,3 +114,26 @@ CREATE TABLE IF NOT EXISTS linkage_results (
 
 CREATE INDEX IF NOT EXISTS linkage_results_case_id_idx
 ON linkage_results(case_id);
+
+-- 8. insights (Stage 2A deterministic computation output)
+CREATE TABLE IF NOT EXISTS insights (
+    id          SERIAL PRIMARY KEY,
+    case_id     INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    account_id  INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    category    TEXT NOT NULL
+                CHECK (category IN (
+                    'geography', 'pattern_of_life', 'identity_consistency',
+                    'coordination', 'risk', 'cross_reference', 'content'
+                )),
+    claim       TEXT NOT NULL,
+    confidence  TEXT NOT NULL
+                CHECK (confidence IN ('high', 'medium', 'low')),
+    evidence    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS insights_case_id_idx
+ON insights(case_id);
+
+CREATE INDEX IF NOT EXISTS insights_account_id_idx
+ON insights(account_id);

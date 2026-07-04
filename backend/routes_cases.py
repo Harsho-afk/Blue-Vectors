@@ -369,19 +369,103 @@ def add_identifiers(
     return {"added": len(body)}
 
 
+@router.put("/{case_id}/identifiers/{identifier_id}")
+def update_identifier(
+    case_id: int,
+    identifier_id: int,
+    body: IdentifierIn,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update an existing identifier's type, value, or platform_hint."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM case_identifiers WHERE id = %s AND case_id = %s",
+            (identifier_id, case_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Identifier not found")
+        cur.execute(
+            """
+            UPDATE case_identifiers
+            SET identifier_type = %s, value = %s, platform_hint = %s
+            WHERE id = %s AND case_id = %s
+            """,
+            (body.identifier_type, body.value, body.platform_hint, identifier_id, case_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"updated": identifier_id}
+
+
+@router.delete("/{case_id}/identifiers/{identifier_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_identifier(
+    case_id: int,
+    identifier_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a single identifier from a case."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM case_identifiers WHERE id = %s AND case_id = %s",
+            (identifier_id, case_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Identifier not found")
+        cur.execute(
+            "DELETE FROM case_identifiers WHERE id = %s AND case_id = %s",
+            (identifier_id, case_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class CorrelateRequest(BaseModel):
+    account_a_id: Optional[int] = None
+    account_b_id: Optional[int] = None
+
+
 @router.post("/{case_id}/correlate")
-def run_correlation(case_id: int, current_user: dict = Depends(get_current_user)):
-    """Run pairwise identity correlation on all accounts in a case."""
+def run_correlation(
+    case_id: int,
+    body: Optional[CorrelateRequest] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Run identity correlation on a case.
+    No body or empty body → correlate all pairs.
+    Body with account_a_id + account_b_id → correlate that specific pair only.
+    """
     conn = get_db_conn()
     try:
         check_case_ownership(conn, case_id, current_user["id"])
     finally:
         conn.close()
 
-    from correlator import correlate_case
-    results = correlate_case(case_id)
-
-    return {"results": results}
+    if body and body.account_a_id is not None and body.account_b_id is not None:
+        if body.account_a_id == body.account_b_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot correlate an account with itself",
+            )
+        from correlator import correlate_single_pair
+        try:
+            result = correlate_single_pair(case_id, body.account_a_id, body.account_b_id)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        return {"results": [result]}
+    else:
+        from correlator import correlate_case
+        results = correlate_case(case_id)
+        return {"results": results}
 
 
 @router.get("/{case_id}/results")

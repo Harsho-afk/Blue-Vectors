@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import { AlertCircle, CheckCircle2, ChevronDown, Zap } from 'lucide-react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  Loader2,
+  Zap,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,7 +14,30 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+
+interface ShapData {
+  confidence_pct?: number
+  band?: string
+  evidence_type?: string
+  username_score?: number | null
+  username_raw?: number | null
+  username_distinctiveness?: number | null
+  bio_score?: number | null
+  temporal_score?: number | null
+  community_score?: number | null
+  stylometry_score?: number | null
+  geo_agreement?: number | null
+  tier1_links?: string[]
+  notes?: string[]
+}
 
 interface CorrelationResult {
   id: number
@@ -21,14 +50,7 @@ interface CorrelationResult {
   b_platform?: string
   b_username?: string
   b_display_name?: string
-  shap_json: {
-    confidence_pct?: number
-    band?: string
-    username_score?: number | null
-    bio_score?: number | null
-    temporal_score?: number | null
-    notes?: string[]
-  }
+  shap_json: ShapData
 }
 
 interface Account {
@@ -42,7 +64,7 @@ interface Props {
   results: CorrelationResult[]
   accounts: Account[]
   isCorrelating: boolean
-  onCorrelate: () => void
+  onCorrelate: (accountAId?: number, accountBId?: number) => void
 }
 
 function bandVariant(band: string) {
@@ -50,6 +72,15 @@ function bandVariant(band: string) {
   if (band === 'Medium') return 'secondary' as const
   return 'destructive' as const
 }
+
+const SIGNAL_DEFS = [
+  { key: 'username_score', label: 'Username Match' },
+  { key: 'bio_score', label: 'Bio Similarity' },
+  { key: 'temporal_score', label: 'Temporal Pattern' },
+  { key: 'community_score', label: 'Community Overlap' },
+  { key: 'stylometry_score', label: 'Writing Style' },
+  { key: 'geo_agreement', label: 'Geo Agreement' },
+] as const
 
 function SignalBar({ label, score }: { label: string; score?: number | null }) {
   const available = score != null
@@ -90,7 +121,7 @@ function ResultRow({
   isExpanded: boolean
   onToggle: () => void
 }) {
-  const shap = result.shap_json || {}
+  const shap: ShapData = result.shap_json || {}
   const confidence = shap.confidence_pct ?? result.confidence ?? 0
   const band = shap.band || 'Low'
 
@@ -100,9 +131,17 @@ function ResultRow({
   const aPlatform = result.a_platform || accA?.platform || '?'
   const bPlatform = result.b_platform || accB?.platform || '?'
   const aName =
-    result.a_display_name || result.a_username || accA?.display_name || accA?.username || '?'
+    result.a_display_name ||
+    result.a_username ||
+    accA?.display_name ||
+    accA?.username ||
+    '?'
   const bName =
-    result.b_display_name || result.b_username || accB?.display_name || accB?.username || '?'
+    result.b_display_name ||
+    result.b_username ||
+    accB?.display_name ||
+    accB?.username ||
+    '?'
 
   return (
     <div className='overflow-hidden rounded-lg border transition-colors hover:border-muted-foreground/50'>
@@ -157,10 +196,33 @@ function ResultRow({
             <h4 className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
               Signal Breakdown
             </h4>
-            <SignalBar label='Username Match' score={shap.username_score} />
-            <SignalBar label='Bio Similarity' score={shap.bio_score} />
-            <SignalBar label='Temporal Pattern' score={shap.temporal_score} />
+            {SIGNAL_DEFS.map(({ key, label }) => (
+              <SignalBar
+                key={key}
+                label={label}
+                score={shap[key] as number | null | undefined}
+              />
+            ))}
           </div>
+
+          {shap.tier1_links && shap.tier1_links.length > 0 && (
+            <div className='space-y-2 border-t pt-4'>
+              <h4 className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+                Hard Links
+              </h4>
+              <ul className='space-y-1'>
+                {shap.tier1_links.map((link, idx) => (
+                  <li key={idx} className='flex items-start gap-2 text-sm'>
+                    <CheckCircle2
+                      size={16}
+                      className='mt-0.5 shrink-0 text-green-500'
+                    />
+                    <span>{link}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {shap.notes && shap.notes.length > 0 && (
             <div className='space-y-2 border-t pt-4'>
@@ -193,6 +255,9 @@ export function CorrelationResults({
   onCorrelate,
 }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [mode, setMode] = useState<'all' | 'pair'>('all')
+  const [selectedA, setSelectedA] = useState<string>('')
+  const [selectedB, setSelectedB] = useState<string>('')
 
   const toggleExpanded = (id: number) => {
     setExpandedIds((prev) => {
@@ -206,25 +271,132 @@ export function CorrelationResults({
   const canCorrelate = accounts.length >= 2
   const hasResults = results.length > 0
 
+  const handleRun = () => {
+    if (mode === 'pair') {
+      const aId = parseInt(selectedA, 10)
+      const bId = parseInt(selectedB, 10)
+      if (!isNaN(aId) && !isNaN(bId) && aId !== bId) {
+        onCorrelate(aId, bId)
+      }
+    } else {
+      onCorrelate()
+    }
+  }
+
+  const pairValid =
+    mode === 'pair' &&
+    selectedA &&
+    selectedB &&
+    selectedA !== selectedB
+
+  const runDisabled =
+    isCorrelating ||
+    !canCorrelate ||
+    (mode === 'pair' && !pairValid)
+
   return (
     <Card>
-      <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-4'>
-        <CardTitle>Identity Correlation</CardTitle>
-        <div className='flex items-center gap-2'>
-          {!canCorrelate && (
-            <span className='text-xs text-muted-foreground'>
-              Collect at least 2 accounts to run correlation.
-            </span>
-          )}
-          <Button
-            onClick={onCorrelate}
-            disabled={isCorrelating || !canCorrelate}
-            size='sm'
-          >
-            <Zap size={16} />
-            {isCorrelating ? 'Correlating...' : 'Correlate'}
-          </Button>
+      <CardHeader className='space-y-4 pb-4'>
+        <div className='flex flex-row items-center justify-between space-y-0'>
+          <CardTitle>Identity Correlation</CardTitle>
+          <div className='flex items-center gap-2'>
+            {!canCorrelate && (
+              <span className='text-xs text-muted-foreground'>
+                Collect at least 2 accounts to run correlation.
+              </span>
+            )}
+            <Button
+              onClick={handleRun}
+              disabled={runDisabled}
+              size='sm'
+            >
+              {isCorrelating ? (
+                <>
+                  <Loader2 size={16} className='animate-spin' />
+                  Correlating...
+                </>
+              ) : (
+                <>
+                  <Zap size={16} />
+                  Correlate
+                </>
+              )}
+            </Button>
+          </div>
         </div>
+
+        {canCorrelate && (
+          <div className='flex flex-wrap items-end gap-3'>
+            <div className='flex gap-1 rounded-lg border p-1'>
+              <Button
+                variant={mode === 'all' ? 'default' : 'ghost'}
+                size='sm'
+                className='h-7 text-xs'
+                onClick={() => setMode('all')}
+                disabled={isCorrelating}
+              >
+                All Pairs
+              </Button>
+              <Button
+                variant={mode === 'pair' ? 'default' : 'ghost'}
+                size='sm'
+                className='h-7 text-xs'
+                onClick={() => setMode('pair')}
+                disabled={isCorrelating}
+              >
+                Custom Pair
+              </Button>
+            </div>
+
+            {mode === 'pair' && (
+              <div className='flex items-center gap-2'>
+                <Select
+                  value={selectedA}
+                  onValueChange={setSelectedA}
+                  disabled={isCorrelating}
+                >
+                  <SelectTrigger className='h-8 w-[200px]'>
+                    <SelectValue placeholder='Account A' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((acc) => (
+                      <SelectItem
+                        key={acc.id}
+                        value={String(acc.id)}
+                        disabled={String(acc.id) === selectedB}
+                      >
+                        {acc.platform}: {acc.display_name || acc.username}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <span className='text-sm text-muted-foreground'>vs</span>
+
+                <Select
+                  value={selectedB}
+                  onValueChange={setSelectedB}
+                  disabled={isCorrelating}
+                >
+                  <SelectTrigger className='h-8 w-[200px]'>
+                    <SelectValue placeholder='Account B' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((acc) => (
+                      <SelectItem
+                        key={acc.id}
+                        value={String(acc.id)}
+                        disabled={String(acc.id) === selectedA}
+                      >
+                        {acc.platform}: {acc.display_name || acc.username}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className='space-y-3'>

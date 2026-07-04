@@ -4,12 +4,14 @@ import {
   Activity,
   ArrowLeft,
   Calendar,
+  Check,
   ChevronDown,
   Download,
   ExternalLink,
   GitMerge,
   Loader2,
   MapPin,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -229,6 +231,12 @@ function CaseDetail() {
   const [addRows, setAddRows] = useState<IdRow[]>([{ ...EMPTY_ROW }])
   const [addingIds, setAddingIds] = useState(false)
 
+  // Edit-identifier state
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editRow, setEditRow] = useState<IdRow>({ ...EMPTY_ROW })
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+
   // Profiles tab state
   const [postView, setPostView] = useState<
     Record<number, { filter: string; expanded: boolean }>
@@ -347,17 +355,30 @@ function CaseDetail() {
     }
   }
 
-  const handleCorrelate = async () => {
+  const handleCorrelate = async (
+    accountAId?: number,
+    accountBId?: number
+  ) => {
     setIsCorrelating(true)
     setError(null)
     try {
+      const isPair =
+        accountAId != null && accountBId != null
       const res = await fetch(`${API}/api/cases/${id}/correlate`, {
         method: 'POST',
         credentials: 'include',
+        ...(isPair
+          ? {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                account_a_id: accountAId,
+                account_b_id: accountBId,
+              }),
+            }
+          : {}),
       })
       if (res.ok) {
-        const data = await res.json()
-        setCorrelationResults(data.results || [])
+        fetchResults()
       } else {
         const err = await res.json().catch(() => ({}))
         setError(
@@ -384,6 +405,61 @@ function CaseDetail() {
       navigate({ to: '/cases' })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete case')
+    }
+  }
+
+  // ── Edit/Delete identifier handlers ──
+
+  const handleEditIdentifier = async (identId: number) => {
+    if (!editRow.value.trim()) return
+    setSavingEdit(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API}/api/cases/${id}/identifiers/${identId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          identifier_type: editRow.identifier_type,
+          value: editRow.value.trim(),
+          platform_hint:
+            editRow.identifier_type === 'username' &&
+            editRow.platform_hint &&
+            editRow.platform_hint !== 'none'
+              ? editRow.platform_hint
+              : null,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        throw new Error(err)
+      }
+      setEditingId(null)
+      fetchCase()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update identifier')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleDeleteIdentifier = async (identId: number) => {
+    setDeletingId(identId)
+    setError(null)
+    try {
+      const res = await fetch(`${API}/api/cases/${id}/identifiers/${identId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().then((d) => d.detail).catch(() => res.statusText)
+        throw new Error(err)
+      }
+      fetchCase()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete identifier')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -642,55 +718,223 @@ function CaseDetail() {
                       <TableBody>
                         {identifiers.map((ident) => (
                           <TableRow key={ident.id}>
-                            <TableCell>
-                              <Badge
-                                variant={
-                                  ident.identifier_type === 'username'
-                                    ? 'default'
-                                    : 'secondary'
-                                }
-                              >
-                                {ident.identifier_type === 'profile_url'
-                                  ? 'URL'
-                                  : capitalize(ident.identifier_type)}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className='font-mono text-sm'>
-                              {ident.value}
-                            </TableCell>
-                            <TableCell>
-                              {ident.platform_hint ? (
-                                <Badge variant='secondary'>
-                                  {capitalize(ident.platform_hint)}
-                                </Badge>
-                              ) : (
-                                <span className='text-muted-foreground'>
-                                  —
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className='text-right'>
-                              {ident.identifier_type === 'username' && (
-                                <Button
-                                  variant='outline'
-                                  size='sm'
-                                  disabled={!!collecting[ident.id]}
-                                  onClick={() => handleCollect(ident)}
-                                >
-                                  {collecting[ident.id] ? (
-                                    <>
-                                      <Loader2 className='h-3 w-3 animate-spin' />
-                                      Collecting...
-                                    </>
+                            {editingId === ident.id ? (
+                              <>
+                                <TableCell>
+                                  <Select
+                                    value={editRow.identifier_type}
+                                    onValueChange={(v) =>
+                                      setEditRow((prev) => ({
+                                        ...prev,
+                                        identifier_type: v,
+                                      }))
+                                    }
+                                    disabled={savingEdit}
+                                  >
+                                    <SelectTrigger className='h-8 w-[110px]'>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {IDENTIFIER_TYPES.map((t) => (
+                                        <SelectItem
+                                          key={t.value}
+                                          value={t.value}
+                                        >
+                                          {t.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <Input
+                                    className='h-8 font-mono text-sm'
+                                    value={editRow.value}
+                                    onChange={(e) =>
+                                      setEditRow((prev) => ({
+                                        ...prev,
+                                        value: e.target.value,
+                                      }))
+                                    }
+                                    disabled={savingEdit}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  {editRow.identifier_type === 'username' ? (
+                                    <Select
+                                      value={editRow.platform_hint || 'none'}
+                                      onValueChange={(v) =>
+                                        setEditRow((prev) => ({
+                                          ...prev,
+                                          platform_hint: v,
+                                        }))
+                                      }
+                                      disabled={savingEdit}
+                                    >
+                                      <SelectTrigger className='h-8 w-[110px]'>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value='none'>
+                                          None
+                                        </SelectItem>
+                                        {PLATFORMS.map((p) => (
+                                          <SelectItem
+                                            key={p.value}
+                                            value={p.value}
+                                          >
+                                            {p.label}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   ) : (
-                                    <>
-                                      <Download className='h-3 w-3' />
-                                      Collect
-                                    </>
+                                    <span className='text-muted-foreground'>
+                                      —
+                                    </span>
                                   )}
-                                </Button>
-                              )}
-                            </TableCell>
+                                </TableCell>
+                                <TableCell className='text-right'>
+                                  <div className='flex items-center justify-end gap-1'>
+                                    <Button
+                                      variant='ghost'
+                                      size='icon'
+                                      className='h-7 w-7'
+                                      disabled={savingEdit}
+                                      onClick={() =>
+                                        handleEditIdentifier(ident.id)
+                                      }
+                                    >
+                                      {savingEdit ? (
+                                        <Loader2 className='h-3 w-3 animate-spin' />
+                                      ) : (
+                                        <Check className='h-3 w-3' />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant='ghost'
+                                      size='icon'
+                                      className='h-7 w-7'
+                                      disabled={savingEdit}
+                                      onClick={() => setEditingId(null)}
+                                    >
+                                      <X className='h-3 w-3' />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </>
+                            ) : (
+                              <>
+                                <TableCell>
+                                  <Badge
+                                    variant={
+                                      ident.identifier_type === 'username'
+                                        ? 'default'
+                                        : 'secondary'
+                                    }
+                                  >
+                                    {ident.identifier_type === 'profile_url'
+                                      ? 'URL'
+                                      : capitalize(ident.identifier_type)}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className='font-mono text-sm'>
+                                  {ident.value}
+                                </TableCell>
+                                <TableCell>
+                                  {ident.platform_hint ? (
+                                    <Badge variant='secondary'>
+                                      {capitalize(ident.platform_hint)}
+                                    </Badge>
+                                  ) : (
+                                    <span className='text-muted-foreground'>
+                                      —
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell className='text-right'>
+                                  <div className='flex items-center justify-end gap-1'>
+                                    {ident.identifier_type === 'username' && (
+                                      <Button
+                                        variant='outline'
+                                        size='sm'
+                                        disabled={!!collecting[ident.id]}
+                                        onClick={() => handleCollect(ident)}
+                                      >
+                                        {collecting[ident.id] ? (
+                                          <>
+                                            <Loader2 className='h-3 w-3 animate-spin' />
+                                            Collecting...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Download className='h-3 w-3' />
+                                            Collect
+                                          </>
+                                        )}
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant='ghost'
+                                      size='icon'
+                                      className='h-7 w-7'
+                                      onClick={() => {
+                                        setEditingId(ident.id)
+                                        setEditRow({
+                                          identifier_type:
+                                            ident.identifier_type,
+                                          value: ident.value,
+                                          platform_hint:
+                                            ident.platform_hint || '',
+                                        })
+                                      }}
+                                    >
+                                      <Pencil className='h-3 w-3' />
+                                    </Button>
+                                    <AlertDialog>
+                                      <AlertDialogTrigger asChild>
+                                        <Button
+                                          variant='ghost'
+                                          size='icon'
+                                          className='h-7 w-7 text-destructive hover:text-destructive'
+                                          disabled={deletingId === ident.id}
+                                        >
+                                          {deletingId === ident.id ? (
+                                            <Loader2 className='h-3 w-3 animate-spin' />
+                                          ) : (
+                                            <Trash2 className='h-3 w-3' />
+                                          )}
+                                        </Button>
+                                      </AlertDialogTrigger>
+                                      <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                          <AlertDialogTitle>
+                                            Delete identifier?
+                                          </AlertDialogTitle>
+                                          <AlertDialogDescription>
+                                            This will remove &quot;
+                                            {ident.value}&quot; from this case.
+                                          </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                          <AlertDialogCancel>
+                                            Cancel
+                                          </AlertDialogCancel>
+                                          <AlertDialogAction
+                                            onClick={() =>
+                                              handleDeleteIdentifier(ident.id)
+                                            }
+                                            className='bg-destructive text-white hover:bg-destructive/90'
+                                          >
+                                            Delete
+                                          </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                      </AlertDialogContent>
+                                    </AlertDialog>
+                                  </div>
+                                </TableCell>
+                              </>
+                            )}
                           </TableRow>
                         ))}
                       </TableBody>
@@ -916,7 +1160,7 @@ function CaseDetail() {
           {/* ── Correlation Tab ── */}
           <TabsContent value='correlation'>
             <CorrelationResults
-              results={correlationResults as any}
+              results={correlationResults}
               accounts={accounts}
               isCorrelating={isCorrelating}
               onCorrelate={handleCorrelate}
