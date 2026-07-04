@@ -54,6 +54,7 @@ services:
         env_file:
             - .env
         environment:
+            DATABASE_URL: postgresql://aria:aria_password@postgres:5432/aria
             REDLIB_URL: http://aria-redlib:8080
             REDLIB_PUBLIC_URL: http://localhost:8080
             WHATSAPP_SIDECAR_URL: http://aria-wa-sidecar:3333
