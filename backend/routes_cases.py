@@ -7,6 +7,7 @@ DELETE /api/cases/{case_id}               delete case + cascade
 POST   /api/cases/{case_id}/identifiers   add identifier(s) to existing case
 POST   /api/cases/{case_id}/collect       collect data for a case identifier
 """
+
 import json
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -34,6 +35,12 @@ class CollectRequest(BaseModel):
     username: str
     limit: int = Field(default=50, ge=1, le=500)
     include_social_graph: bool = True
+    # 0 = unlimited (paginate everything). Currently only honored by the
+    # Instagram collector; other platforms accept but ignore these.
+    follower_limit: int = Field(default=0, ge=0)
+    following_limit: int = Field(default=0, ge=0)
+    fetch_comments: bool = False
+    comment_limit: int = Field(default=0, ge=0)
 
 
 class CaseResponse(BaseModel):
@@ -333,7 +340,11 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
                 "id": o["id"],
                 "lookup_type": o["lookup_type"],
                 "input_value": o["input_value"],
-                "result": json.loads(o["result_json"]) if isinstance(o["result_json"], str) else o["result_json"],
+                "result": (
+                    json.loads(o["result_json"])
+                    if isinstance(o["result_json"], str)
+                    else o["result_json"]
+                ),
                 "created_at": str(o["created_at"]),
             }
             for o in osint_rows
@@ -345,7 +356,11 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
                 "category": ins["category"],
                 "claim": ins["claim"],
                 "confidence": ins["confidence"],
-                "evidence": json.loads(ins["evidence"]) if isinstance(ins["evidence"], str) else ins["evidence"],
+                "evidence": (
+                    json.loads(ins["evidence"])
+                    if isinstance(ins["evidence"], str)
+                    else ins["evidence"]
+                ),
                 "created_at": str(ins["created_at"]),
             }
             for ins in insight_rows
@@ -354,11 +369,16 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
             {
                 "id": intel_row["id"],
                 "narrative": intel_row["narrative"],
-                "claims": json.loads(intel_row["claims"]) if isinstance(intel_row["claims"], str) else intel_row["claims"],
+                "claims": (
+                    json.loads(intel_row["claims"])
+                    if isinstance(intel_row["claims"], str)
+                    else intel_row["claims"]
+                ),
                 "label": intel_row["label"],
                 "created_at": str(intel_row["created_at"]),
             }
-            if intel_row else None
+            if intel_row
+            else None
         ),
     }
 
@@ -461,7 +481,13 @@ def update_identifier(
             SET identifier_type = %s, value = %s, platform_hint = %s
             WHERE id = %s AND case_id = %s
             """,
-            (body.identifier_type, body.value, body.platform_hint, identifier_id, case_id),
+            (
+                body.identifier_type,
+                body.value,
+                body.platform_hint,
+                identifier_id,
+                case_id,
+            ),
         )
         conn.commit()
     finally:
@@ -470,7 +496,9 @@ def update_identifier(
     return {"updated": identifier_id}
 
 
-@router.delete("/{case_id}/identifiers/{identifier_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{case_id}/identifiers/{identifier_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 def delete_identifier(
     case_id: int,
     identifier_id: int,
@@ -525,19 +553,25 @@ def run_correlation(
                 detail="Cannot correlate an account with itself",
             )
         from correlator import correlate_single_pair
+
         try:
-            result = correlate_single_pair(case_id, body.account_a_id, body.account_b_id)
+            result = correlate_single_pair(
+                case_id, body.account_a_id, body.account_b_id
+            )
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         return {"results": [result]}
     else:
         from correlator import correlate_case
+
         results = correlate_case(case_id)
         return {"results": results}
 
 
 @router.get("/{case_id}/results")
-def get_correlation_results(case_id: int, current_user: dict = Depends(get_current_user)):
+def get_correlation_results(
+    case_id: int, current_user: dict = Depends(get_current_user)
+):
     """Get stored correlation results for a case with per-signal breakdown."""
     conn = get_db_conn()
     try:
@@ -606,7 +640,9 @@ def run_intelligence(case_id: int, current_user: dict = Depends(get_current_user
             "model": analyst_output.get("model"),
         }
     except RuntimeError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     finally:
@@ -650,6 +686,10 @@ async def collect_for_case(
     """
     Collect data for an identifier and save it to the case.
     Calls the Layer 1 collector and persists the account + posts to the DB.
+
+    follower_limit / following_limit / comment_limit default to 0
+    ("unlimited") and are currently only meaningful for Instagram; other
+    platforms accept and ignore them.
     """
     conn = get_db_conn()
     try:
@@ -663,6 +703,10 @@ async def collect_for_case(
             body.username,
             limit=body.limit,
             include_social_graph=body.include_social_graph,
+            follower_limit=body.follower_limit,
+            following_limit=body.following_limit,
+            fetch_comments=body.fetch_comments,
+            comment_limit=body.comment_limit,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

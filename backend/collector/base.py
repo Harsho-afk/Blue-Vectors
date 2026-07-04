@@ -109,6 +109,10 @@ def collect(
     username: str,
     limit: int = 100,
     include_social_graph: bool = True,
+    follower_limit: int = 0,
+    following_limit: int = 0,
+    fetch_comments: bool = False,
+    comment_limit: int = 0,
 ) -> AccountProfile:
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
@@ -123,7 +127,13 @@ def collect(
         return GitHubCollector().collect(username, limit=limit)
     if platform == "instagram":
         return InstagramCollector().collect(
-            username, limit=limit, include_social_graph=include_social_graph
+            username,
+            limit=limit,
+            include_social_graph=include_social_graph,
+            follower_limit=follower_limit,
+            following_limit=following_limit,
+            fetch_comments=fetch_comments,
+            comment_limit=comment_limit,
         )
     raise ValueError(f"Unhandled platform: {platform}")
 
@@ -133,6 +143,10 @@ async def collect_async(
     username: str,
     limit: int = 100,
     include_social_graph: bool = True,
+    follower_limit: int = 0,
+    following_limit: int = 0,
+    fetch_comments: bool = False,
+    comment_limit: int = 0,
 ) -> AccountProfile:
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
@@ -158,7 +172,13 @@ async def collect_async(
         return await loop.run_in_executor(
             None,
             lambda: InstagramCollector().collect(
-                username, limit=limit, include_social_graph=include_social_graph
+                username,
+                limit=limit,
+                include_social_graph=include_social_graph,
+                follower_limit=follower_limit,
+                following_limit=following_limit,
+                fetch_comments=fetch_comments,
+                comment_limit=comment_limit,
             ),
         )
     raise ValueError(f"Unhandled platform: {platform}")

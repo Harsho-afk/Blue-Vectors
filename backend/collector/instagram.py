@@ -34,11 +34,18 @@ from .models import AccountProfile, Post, log
 # INSTALL:
 #   pip install "instagrapi[curl]"
 #
+# UNLIMITED COLLECTION NOTE:
+#   follower_limit, following_limit, and comment_limit all accept 0 to mean
+#   "no cap" — instagrapi paginates through the ENTIRE list internally when
+#   amount=0. This can mean hundreds of requests for large/popular accounts
+#   and significantly increases the chance of hitting Instagram's own rate
+#   limits (RateLimitError), independent of any cap in this code.
+#
 # DATA RETENTION POLICY FOR THIS COLLECTOR:
-#   Every field instagrapi's pydantic models expose for profile/media/user
-#   objects is captured somewhere in AccountProfile/Post — nothing fetched
-#   is silently discarded. Network posts (followers/following) keep the
-#   original GitHub-style "logins" (list[str]) for frontend compatibility,
+#   Every field instagrapi's pydantic models expose for profile/media/user/
+#   comment objects is captured somewhere in AccountProfile/Post — nothing
+#   fetched is silently discarded. Network posts (followers/following) keep
+#   the original GitHub-style "logins" (list[str]) for frontend compatibility,
 #   PLUS a parallel "users" field with the full per-account dict, so no
 #   detail is lost even though only usernames render today.
 # ---------------------------------------------------------------------------
@@ -130,6 +137,52 @@ def _usertag_to_dict(tag) -> dict:
     }
 
 
+def _comment_to_dict(comment) -> dict:
+    """Normalize instagrapi's Comment model into a plain dict."""
+    user = getattr(comment, "user", None)
+    created = getattr(comment, "created_at_utc", None) or getattr(comment, "created_at", None)
+    created_ts = None
+    if created is not None:
+        try:
+            created_ts = created.timestamp()
+        except AttributeError:
+            created_ts = None
+
+    return {
+        "pk":              str(getattr(comment, "pk", "") or ""),
+        "text":            getattr(comment, "text", "") or "",
+        "username":        getattr(user, "username", "") or "",
+        "user_pk":         str(getattr(user, "pk", "") or ""),
+        "created_at":      created_ts,
+        "like_count":      getattr(comment, "like_count", None),
+        "reply_count":     len(getattr(comment, "child_comments", None) or []),
+    }
+
+
+def _fetch_comments(cl: Client, media_pk, amount: int, username: str, shortcode: str) -> list[dict]:
+    """
+    Fetch comments for a single post.
+    amount=0 tells instagrapi to paginate through ALL comments rather than
+    stopping at a cap — for posts with heavy engagement this can be many
+    requests and increases the odds of a RateLimitError.
+    """
+    try:
+        raw = cl.media_comments(media_pk, amount=amount)
+        return [_comment_to_dict(c) for c in raw]
+    except RateLimitError as exc:
+        log.warning(
+            "Instagram: rate limited fetching comments for @%s/%s — %s",
+            username, shortcode, exc,
+        )
+        return []
+    except Exception as exc:
+        log.warning(
+            "Instagram: failed to fetch comments for @%s/%s — %s",
+            username, shortcode, exc,
+        )
+        return []
+
+
 class InstagramCollector:
     """
     Collects public Instagram profile + post metadata via instagrapi.
@@ -151,8 +204,8 @@ class InstagramCollector:
         is_private: bool,
         follower_count: int | None,
         following_count: int | None,
-        follower_limit: int = 200,
-        following_limit: int = 200,
+        follower_limit: int = 0,
+        following_limit: int = 0,
     ) -> list[Post]:
         """
         Fetches followers/following and returns them as synthetic "network"
@@ -163,11 +216,12 @@ class InstagramCollector:
         profile_pic_url, is_private, is_verified) so nothing instagrapi
         returned is thrown away, even though only usernames render today.
 
-        Capped by follower_limit/following_limit (default 200 each) via
-        instagrapi's `amount` param — without a cap, a large account (e.g.
-        a brand with millions of followers) would try to paginate its
-        entire follower list, which is impractically slow and gets rate
-        limited almost immediately.
+        follower_limit/following_limit default to 0, which tells instagrapi
+        to paginate through the ENTIRE follower/following list rather than
+        stopping at a cap. For large accounts (e.g. a brand with millions of
+        followers) this means many more requests, a much longer collection
+        time, and a real risk of Instagram's own rate limiting kicking in —
+        that ceiling is now Instagram's, not this code's.
 
         Skipped automatically for private accounts (same restriction as posts).
         Can raise ValueError on rate limit / client errors, same pattern as
@@ -253,16 +307,35 @@ class InstagramCollector:
         username: str,
         limit: int = 100,
         include_social_graph: bool = True,
-        follower_limit: int = 200,
-        following_limit: int = 200,
+        follower_limit: int = 0,
+        following_limit: int = 0,
+        fetch_comments: bool = False,
+        comment_limit: int = 0,
     ) -> AccountProfile:
+        """
+        Collect a full Instagram profile.
+
+        limit:            max posts to fetch (0 = unlimited — paginates the
+                           entire post history; can be slow/rate-limit-prone
+                           on large accounts).
+        follower_limit:   max followers to fetch (0 = unlimited).
+        following_limit:  max following to fetch (0 = unlimited).
+        fetch_comments:   if True, fetch comments for each post.
+        comment_limit:    max comments per post (0 = unlimited).
+        """
         username = username.strip().lstrip("@")
         self._ensure_client()
         cl = self._client
 
-        log.info("Instagram: collecting @%s (limit=%d)", username, limit)
+        log.info(
+            "Instagram: collecting @%s (limit=%s, comments=%s/%s)",
+            username,
+            limit or "unlimited",
+            fetch_comments,
+            comment_limit or "unlimited",
+        )
 
-        # ── Profile ────────────────────────────────────────────────────
+        # ── Profile ────────────────────────────────────────────────────────
         try:
             user_id = cl.user_id_from_username(username)
             user    = cl.user_info(user_id)
@@ -288,7 +361,7 @@ class InstagramCollector:
                 f"Instagram: error fetching profile for @{username} — {exc}"
             ) from exc
 
-        # ── Posts ──────────────────────────────────────────────────────
+        # ── Posts ──────────────────────────────────────────────────────────
         posts: list[Post] = []
 
         if user.is_private:
@@ -356,6 +429,13 @@ class InstagramCollector:
             except Exception:
                 pass
 
+            # Comments — opt-in, since each post costs an extra request (or
+            # many, when uncapped). Skipped for accounts with zero comments
+            # or when the caller didn't ask for them.
+            comments: list[dict] = []
+            if fetch_comments and not user.is_private and (media.comment_count or 0) > 0:
+                comments = _fetch_comments(cl, media.pk, comment_limit, username, shortcode)
+
             posts.append(Post(
                 external_id=shortcode,
                 text=media.caption_text or "",
@@ -373,6 +453,8 @@ class InstagramCollector:
                     "title":                 getattr(media, "title", "") or "",
                     "like_count":            media.like_count,
                     "comment_count":         media.comment_count,
+                    "comments":              comments,
+                    "comments_fetched":      len(comments),
                     "video_view_count":      getattr(media, "view_count", None) if media_type == 2 else None,
                     "play_count":            getattr(media, "play_count", None),
                     "location":              media.location.name if media.location else None,
@@ -400,9 +482,11 @@ class InstagramCollector:
 
         all_posts = posts + network_posts
         all_posts.sort(key=lambda p: p.timestamp, reverse=True)
+
+        total_comments = sum(p.metadata.get("comments_fetched", 0) for p in posts)
         log.info(
-            "Instagram ✓: @%s — %d posts collected (private=%s)",
-            username, len(posts), user.is_private,
+            "Instagram ✓: @%s — %d posts collected (private=%s), %d comments fetched",
+            username, len(posts), user.is_private, total_comments,
         )
 
         return AccountProfile(

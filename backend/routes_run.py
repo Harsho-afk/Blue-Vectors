@@ -79,9 +79,13 @@ def _check_case_ownership(conn, case_id: int, user_id: int):
     cur.execute("SELECT investigator_id FROM cases WHERE id = %s", (case_id,))
     row = cur.fetchone()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Case not found"
+        )
     if row["investigator_id"] != user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Case not found"
+        )
 
 
 def _load_identifiers(conn, case_id: int) -> list[dict]:
@@ -113,29 +117,54 @@ def _find_collectible_platforms(maigret_result: dict) -> list[str]:
 # accounts).
 # ─────────────────────────────────────────────────────────────────────────
 
-async def _collect_one_platform(case_id: int, platform: str, username: str, emit) -> int:
-    await emit({"step": "collect", "status": "running", "platform": platform, "username": username})
+
+async def _collect_one_platform(
+    case_id: int, platform: str, username: str, emit
+) -> int:
+    await emit(
+        {
+            "step": "collect",
+            "status": "running",
+            "platform": platform,
+            "username": username,
+        }
+    )
     try:
-        profile = await collect_async(platform, username)
+        profile = await collect_async(
+            platform,
+            username,
+            follower_limit=0,
+            following_limit=0,
+            fetch_comments=True,
+            comment_limit=0,
+        )
         conn = get_db_conn()
         try:
             save_to_db(profile, conn, case_id)
         finally:
             conn.close()
-        await emit({
-            "step": "collect", "status": "done",
-            "platform": platform, "username": username,
-            "posts": len(profile.posts),
-            "display_name": profile.display_name,
-        })
+        await emit(
+            {
+                "step": "collect",
+                "status": "done",
+                "platform": platform,
+                "username": username,
+                "posts": len(profile.posts),
+                "display_name": profile.display_name,
+            }
+        )
         return 1
     except Exception as e:
         log.warning("Collection failed for %s/%s: %s", platform, username, e)
-        await emit({
-            "step": "collect", "status": "error",
-            "platform": platform, "username": username,
-            "error": str(e),
-        })
+        await emit(
+            {
+                "step": "collect",
+                "status": "error",
+                "platform": platform,
+                "username": username,
+                "error": str(e),
+            }
+        )
         return 0
 
 
@@ -149,7 +178,14 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
     if platform_hint and platform_hint in SUPPORTED_PLATFORMS:
         return await _collect_one_platform(case_id, platform_hint, username, emit)
 
-    await emit({"step": "maigret", "status": "running", "seed": username, "message": "Searching 500+ platforms..."})
+    await emit(
+        {
+            "step": "maigret",
+            "status": "running",
+            "seed": username,
+            "message": "Searching 500+ platforms...",
+        }
+    )
     try:
         maigret_result = await run_maigret(username)
 
@@ -161,12 +197,16 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
 
         total_found = maigret_result.get("total_found", 0)
         lead_summary = maigret_result.get("lead_summary", {})
-        await emit({
-            "step": "maigret", "status": "done",
-            "seed": username, "found": total_found,
-            "lead_summary": lead_summary,
-            "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
-        })
+        await emit(
+            {
+                "step": "maigret",
+                "status": "done",
+                "seed": username,
+                "found": total_found,
+                "lead_summary": lead_summary,
+                "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
+            }
+        )
 
         collectible = _find_collectible_platforms(maigret_result)
         if not collectible:
@@ -174,7 +214,10 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
 
         # Deep-collect every discovered platform concurrently.
         results = await asyncio.gather(
-            *[_collect_one_platform(case_id, platform, username, emit) for platform in collectible],
+            *[
+                _collect_one_platform(case_id, platform, username, emit)
+                for platform in collectible
+            ],
             return_exceptions=True,
         )
         collected = 0
@@ -187,16 +230,27 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
 
     except Exception as e:
         log.error("Maigret failed for '%s': %s", username, e)
-        await emit({
-            "step": "maigret", "status": "error",
-            "seed": username, "error": str(e),
-        })
+        await emit(
+            {
+                "step": "maigret",
+                "status": "error",
+                "seed": username,
+                "error": str(e),
+            }
+        )
         return 0
 
 
 async def _process_email_seed(case_id: int, ident: dict, emit) -> int:
     email = ident["value"]
-    await emit({"step": "breach", "status": "running", "seed": email, "message": "Checking breach databases..."})
+    await emit(
+        {
+            "step": "breach",
+            "status": "running",
+            "seed": email,
+            "message": "Checking breach databases...",
+        }
+    )
     try:
         result = await breach_lookup(email)
         conn = get_db_conn()
@@ -204,20 +258,33 @@ async def _process_email_seed(case_id: int, ident: dict, emit) -> int:
             save_breach_lookup(conn, case_id, result)
         finally:
             conn.close()
-        await emit({
-            "step": "breach", "status": "done",
-            "seed": email, "breaches": result.total_breaches,
-            "message": f"Found in {result.total_breaches} breach(es)",
-        })
+        await emit(
+            {
+                "step": "breach",
+                "status": "done",
+                "seed": email,
+                "breaches": result.total_breaches,
+                "message": f"Found in {result.total_breaches} breach(es)",
+            }
+        )
     except Exception as e:
         log.error("Breach lookup failed for '%s': %s", email, e)
-        await emit({"step": "breach", "status": "error", "seed": email, "error": str(e)})
+        await emit(
+            {"step": "breach", "status": "error", "seed": email, "error": str(e)}
+        )
     return 0
 
 
 async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
     phone = ident["value"]
-    await emit({"step": "phone", "status": "running", "seed": phone, "message": "Looking up phone number..."})
+    await emit(
+        {
+            "step": "phone",
+            "status": "running",
+            "seed": phone,
+            "message": "Looking up phone number...",
+        }
+    )
     try:
         collector = PhoneCollector()
         profile = await collector.collect(phone)
@@ -237,11 +304,14 @@ async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
         finally:
             conn.close()
 
-        await emit({
-            "step": "phone", "status": "done",
-            "seed": phone,
-            "message": "Phone lookup complete",
-        })
+        await emit(
+            {
+                "step": "phone",
+                "status": "done",
+                "seed": phone,
+                "message": "Phone lookup complete",
+            }
+        )
     except Exception as e:
         log.error("Phone lookup failed for '%s': %s", phone, e)
         await emit({"step": "phone", "status": "error", "seed": phone, "error": str(e)})
@@ -276,35 +346,52 @@ async def _process_profile_url_seed(case_id: int, ident: dict, emit) -> int:
 # in parallel with each other rather than just interleaving on one thread.
 # ─────────────────────────────────────────────────────────────────────────
 
+
 async def _process_correlation(case_id: int, emit) -> None:
-    await emit({"step": "correlate", "status": "running", "message": "Running identity correlation..."})
+    await emit(
+        {
+            "step": "correlate",
+            "status": "running",
+            "message": "Running identity correlation...",
+        }
+    )
     try:
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(None, correlate_case, case_id)
-        await emit({
-            "step": "correlate", "status": "done",
-            "pairs": len(results),
-            "message": f"Correlated {len(results)} pair(s)",
-        })
+        await emit(
+            {
+                "step": "correlate",
+                "status": "done",
+                "pairs": len(results),
+                "message": f"Correlated {len(results)} pair(s)",
+            }
+        )
     except Exception as e:
         log.error("Correlation failed for case %d: %s", case_id, e)
         await emit({"step": "correlate", "status": "error", "error": str(e)})
 
 
 async def _process_insights(case_id: int, emit) -> None:
-    await emit({"step": "insights", "status": "running", "message": "Computing insights..."})
+    await emit(
+        {"step": "insights", "status": "running", "message": "Computing insights..."}
+    )
     try:
         conn = get_db_conn()
         try:
             loop = asyncio.get_event_loop()
-            insight_results = await loop.run_in_executor(None, run_insights, conn, case_id)
+            insight_results = await loop.run_in_executor(
+                None, run_insights, conn, case_id
+            )
         finally:
             conn.close()
-        await emit({
-            "step": "insights", "status": "done",
-            "count": len(insight_results),
-            "message": f"Generated {len(insight_results)} insight(s)",
-        })
+        await emit(
+            {
+                "step": "insights",
+                "status": "done",
+                "count": len(insight_results),
+                "message": f"Generated {len(insight_results)} insight(s)",
+            }
+        )
     except Exception as e:
         log.error("Insights failed for case %d: %s", case_id, e)
         await emit({"step": "insights", "status": "error", "error": str(e)})
@@ -312,12 +399,28 @@ async def _process_insights(case_id: int, emit) -> None:
 
 async def _process_intelligence(case_id: int, emit) -> None:
     import os
-    has_llm_key = os.environ.get("GROQ_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+
+    has_llm_key = (
+        os.environ.get("GROQ_API_KEY", "").strip()
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+    )
     if not has_llm_key:
-        await emit({"step": "intelligence", "status": "skipped", "message": "No LLM API key configured (GROQ_API_KEY or GEMINI_API_KEY)"})
+        await emit(
+            {
+                "step": "intelligence",
+                "status": "skipped",
+                "message": "No LLM API key configured (GROQ_API_KEY or GEMINI_API_KEY)",
+            }
+        )
         return
 
-    await emit({"step": "intelligence", "status": "running", "message": "Generating intelligence briefing..."})
+    await emit(
+        {
+            "step": "intelligence",
+            "status": "running",
+            "message": "Generating intelligence briefing...",
+        }
+    )
     try:
         from llm.analyst import generate_briefing
         from llm.citation_check import validate_citations, save_report
@@ -335,11 +438,14 @@ async def _process_intelligence(case_id: int, emit) -> None:
                 conn.close()
 
         checked = await loop.run_in_executor(None, _run_briefing)
-        await emit({
-            "step": "intelligence", "status": "done",
-            "claims": len(checked["claims"]),
-            "message": f"Intelligence briefing generated ({len(checked['claims'])} cited claims)",
-        })
+        await emit(
+            {
+                "step": "intelligence",
+                "status": "done",
+                "claims": len(checked["claims"]),
+                "message": f"Intelligence briefing generated ({len(checked['claims'])} cited claims)",
+            }
+        )
     except Exception as e:
         log.error("Intelligence briefing failed for case %d: %s", case_id, e)
         await emit({"step": "intelligence", "status": "error", "error": str(e)})
@@ -350,7 +456,10 @@ async def _process_intelligence(case_id: int, emit) -> None:
 # queue. A `None` sentinel signals completion (success or failure).
 # ─────────────────────────────────────────────────────────────────────────
 
-async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Optional[dict]]") -> None:
+
+async def _run_producer(
+    case_id: int, user_id: int, queue: "asyncio.Queue[Optional[dict]]"
+) -> None:
     emit = queue.put  # async callable: emit(dict) -> awaits queue.put(dict)
 
     conn = get_db_conn()
@@ -361,7 +470,13 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
         conn.close()
 
     if not identifiers:
-        await emit({"step": "error", "status": "error", "message": "No identifiers found. Add seeds first."})
+        await emit(
+            {
+                "step": "error",
+                "status": "error",
+                "message": "No identifiers found. Add seeds first.",
+            }
+        )
         await queue.put(None)
         return
 
@@ -370,17 +485,17 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
     phones = [i for i in identifiers if i["identifier_type"] == "phone"]
     profile_urls = [i for i in identifiers if i["identifier_type"] == "profile_url"]
 
-    total_actionable = len(usernames) + len(emails) + len(phones) + len(profile_urls)
-    await emit({
-        "step": "init",
-        "status": "running",
-        "message": f"Starting investigation with {len(identifiers)} seed(s) ({total_actionable} running in parallel)",
-        "total_seeds": len(identifiers),
-        "usernames": len(usernames),
-        "emails": len(emails),
-        "phones": len(phones),
-        "profile_urls": len(profile_urls),
-    })
+    await emit(
+        {
+            "step": "init",
+            "status": "running",
+            "message": f"Starting investigation with {len(identifiers)} seed(s) ({len(usernames) + len(emails) + len(phones)} running in parallel)",
+            "total_seeds": len(identifiers),
+            "usernames": len(usernames),
+            "emails": len(emails),
+            "phones": len(phones),
+        }
+    )
 
     # ── Phase 1: all seed collectors, concurrently ────────────────���─────────
     collector_tasks = (
@@ -395,15 +510,20 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
         results = await asyncio.gather(*collector_tasks, return_exceptions=True)
         for r in results:
             if isinstance(r, Exception):
-                log.error("Case %d: a collector task raised unexpectedly: %s", case_id, r)
+                log.error(
+                    "Case %d: a collector task raised unexpectedly: %s", case_id, r
+                )
             else:
                 collected_accounts += r
 
-    await emit({
-        "step": "collection_phase", "status": "done",
-        "accounts_collected": collected_accounts,
-        "message": f"Collection complete — {collected_accounts} account(s) gathered",
-    })
+    await emit(
+        {
+            "step": "collection_phase",
+            "status": "done",
+            "accounts_collected": collected_accounts,
+            "message": f"Collection complete — {collected_accounts} account(s) gathered",
+        }
+    )
 
     # ── Phase 2: correlation + insights, concurrently ───────────────────────
     analysis_tasks = []
@@ -411,15 +531,24 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
     if collected_accounts >= 2:
         analysis_tasks.append(_process_correlation(case_id, emit))
     else:
-        await emit({
-            "step": "correlate", "status": "skipped",
-            "message": f"Need 2+ accounts to correlate (have {collected_accounts})",
-        })
+        await emit(
+            {
+                "step": "correlate",
+                "status": "skipped",
+                "message": f"Need 2+ accounts to correlate (have {collected_accounts})",
+            }
+        )
 
     if collected_accounts >= 1:
         analysis_tasks.append(_process_insights(case_id, emit))
     else:
-        await emit({"step": "insights", "status": "skipped", "message": "No accounts collected"})
+        await emit(
+            {
+                "step": "insights",
+                "status": "skipped",
+                "message": "No accounts collected",
+            }
+        )
 
     if analysis_tasks:
         await asyncio.gather(*analysis_tasks, return_exceptions=True)
@@ -428,11 +557,14 @@ async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Option
     if collected_accounts >= 1:
         await _process_intelligence(case_id, emit)
 
-    await emit({
-        "step": "complete", "status": "done",
-        "message": "Investigation complete",
-        "accounts_collected": collected_accounts,
-    })
+    await emit(
+        {
+            "step": "complete",
+            "status": "done",
+            "message": "Investigation complete",
+            "accounts_collected": collected_accounts,
+        }
+    )
     await queue.put(None)
 
 

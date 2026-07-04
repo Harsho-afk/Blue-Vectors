@@ -1,4 +1,10 @@
 import { type ComponentType, useCallback, useEffect, useState } from 'react'
+import {
+  AccountCommentSearch,
+  CommentAuthor,
+  PostCommentSearch,
+  type InstagramComment,
+} from '@/components/comment-search'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   Activity,
@@ -367,6 +373,8 @@ function CaseDetail() {
     setCollecting((prev) => ({ ...prev, [key]: true }))
     setError(null)
 
+    const isInstagram = platform === 'instagram'
+
     try {
       if (identifier.identifier_type === 'profile_url') {
         // Parse URL to extract platform + username, then collect
@@ -429,6 +437,28 @@ function CaseDetail() {
             throw new Error(err)
           }
         }
+      const res = await fetch(`${API}/api/cases/${id}/collect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          platform,
+          username: identifier.value,
+          include_social_graph: true,
+          ...(isInstagram && {
+            follower_limit: 0, // 0 = unlimited
+            following_limit: 0, // 0 = unlimited
+            fetch_comments: true,
+            comment_limit: 0, // 0 = unlimited
+          }),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
+        throw new Error(err)
       }
       fetchCase()
     } catch (e) {
@@ -1423,6 +1453,7 @@ function CaseDetail() {
                                     id: acc.id,
                                     platform_hint: acc.platform,
                                     value: acc.username,
+                                    identifier_type: 'username',
                                   })
                                 }
                               >
@@ -1882,6 +1913,11 @@ function ProfilesTab({
                 </CardContent>
               </Card>
             )}
+
+            {/* Global Comment Search (Instagram only) */}
+            {acc.platform === 'instagram' && contentPosts.length > 0 && (
+              <AccountCommentSearch posts={contentPosts} />
+            )}
           </div>
         )
       })}
@@ -1918,6 +1954,10 @@ function PostRow({
   const ts = post.timestamp || (meta.timestamp as string)
   const images = (meta.images as string[]) || []
   const showImages = platform !== 'github' && images.length > 0
+
+  const comments = (meta.comments as InstagramComment[]) || []
+  const commentCount = (meta.comment_count as number) ?? comments.length
+  const showComments = platform === 'instagram' && comments.length > 0
 
   return (
     <div className='py-2'>
@@ -1972,8 +2012,16 @@ function PostRow({
             {platform === 'instagram' && meta.like_count != null && (
               <span>♥ {Number(meta.like_count)}</span>
             )}
-            {platform === 'instagram' && meta.comment_count != null && (
-              <span>💬 {Number(meta.comment_count)}</span>
+            {platform === 'instagram' && commentCount != null && (
+              <span>
+                💬 {Number(commentCount)}
+                {comments.length > 0 && comments.length < commentCount && (
+                  <span className='text-muted-foreground/70'>
+                    {' '}
+                    ({comments.length} fetched)
+                  </span>
+                )}
+              </span>
             )}
             {!!meta.url && (
               <a
@@ -1996,6 +2044,18 @@ function PostRow({
               <img src={img} alt='' className='max-h-16 rounded object-cover' />
             </a>
           ))}
+        </div>
+      )}
+
+      {showComments && (
+        <div className='mt-1.5 space-y-1 pl-10'>
+          {comments.slice(0, 2).map((c) => (
+            <p key={c.pk} className='text-xs text-muted-foreground'>
+              <CommentAuthor username={c.username} />{' '}
+              {c.text}
+            </p>
+          ))}
+          <PostCommentSearch comments={comments} postUrl={(meta.url as string) || null} />
         </div>
       )}
     </div>
