@@ -19,7 +19,7 @@ export interface Insight {
   account_id: number | null
   category: string
   claim: string
-  confidence: number
+  confidence: 'high' | 'medium' | 'low'
   evidence: Record<string, unknown>
   created_at: string
 }
@@ -47,9 +47,10 @@ const CATEGORY_LABELS: Record<string, string> = {
   identity: 'Identity',
 }
 
-function confidenceBand(c: number): { label: string; color: string } {
-  if (c >= 0.75) return { label: 'High', color: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' }
-  if (c >= 0.45) return { label: 'Medium', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30' }
+function confidenceBand(c: string): { label: string; color: string } {
+  const level = (c || '').toLowerCase()
+  if (level === 'high') return { label: 'High', color: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' }
+  if (level === 'medium') return { label: 'Medium', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30' }
   return { label: 'Low', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30' }
 }
 
@@ -98,7 +99,7 @@ function InsightCard({
               </span>
             )}
             <Badge className={cn('border text-xs', band.color)}>
-              {band.label} ({Math.round(insight.confidence * 100)}%)
+              {band.label}
             </Badge>
           </div>
           <p className='text-sm'>{insight.claim}</p>

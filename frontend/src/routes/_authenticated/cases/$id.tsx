@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FolderOpen,
   GitMerge,
+  Globe,
   Lightbulb,
   Loader2,
   MapPin,
@@ -67,6 +68,8 @@ import {
 } from '@/components/intelligence-briefing'
 import { Header } from '@/components/layout/header'
 import { Input } from '@/components/ui/input'
+import { InvestigationGraph } from '@/components/investigation-graph'
+import { TimelineView } from '@/components/timeline-view'
 import { InvestigationRunner } from '@/components/investigation-runner'
 import { Main } from '@/components/layout/main'
 import { OsintPanel } from '@/components/osint-panel'
@@ -774,6 +777,14 @@ function CaseDetail() {
                 {correlationResults.length > 0 &&
                   ` (${correlationResults.length})`}
               </TabsTrigger>
+              <TabsTrigger value='graph'>
+                <Globe className='h-4 w-4' />
+                Graph
+              </TabsTrigger>
+              <TabsTrigger value='timeline'>
+                <Calendar className='h-4 w-4' />
+                Timeline
+              </TabsTrigger>
               <TabsTrigger value='insights'>
                 <Lightbulb className='h-4 w-4' />
                 Insights
@@ -1274,6 +1285,16 @@ function CaseDetail() {
               isCorrelating={isCorrelating}
               onCorrelate={handleCorrelate}
             />
+          </TabsContent>
+
+          {/* ── Graph Tab ── */}
+          <TabsContent value='graph'>
+            <InvestigationGraph caseId={id} apiBase={API} />
+          </TabsContent>
+
+          {/* ── Timeline Tab ── */}
+          <TabsContent value='timeline'>
+            <TimelineView caseId={id} apiBase={API} />
           </TabsContent>
 
           {/* ── Insights Tab ── */}

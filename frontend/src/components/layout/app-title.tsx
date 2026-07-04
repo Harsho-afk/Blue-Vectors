@@ -25,8 +25,10 @@ export function AppTitle() {
               onClick={() => setOpenMobile(false)}
               className='grid flex-1 text-start text-sm leading-tight'
             >
-              <span className='truncate font-bold'>ARIA</span>
-              <span className='truncate text-xs'>SOCMINT Investigation Platform</span>
+              <span className='truncate text-lg font-bold tracking-tight'>
+                <span className='text-[#0075ff]'>ARIA</span>
+              </span>
+              <span className='truncate text-xs text-muted-foreground'>SOCMINT Platform</span>
             </Link>
             <ToggleSidebar />
           </div>

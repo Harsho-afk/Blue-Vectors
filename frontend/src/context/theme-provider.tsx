@@ -4,7 +4,7 @@ import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 type Theme = 'dark' | 'light' | 'system'
 type ResolvedTheme = Exclude<Theme, 'system'>
 
-const DEFAULT_THEME = 'light'
+const DEFAULT_THEME = 'dark'
 const THEME_COOKIE_NAME = 'vite-ui-theme'
 const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
 
@@ -24,7 +24,7 @@ type ThemeProviderState = {
 
 const initialState: ThemeProviderState = {
   defaultTheme: DEFAULT_THEME,
-  resolvedTheme: 'light',
+  resolvedTheme: 'dark',
   theme: DEFAULT_THEME,
   setTheme: () => null,
   resetTheme: () => null,
