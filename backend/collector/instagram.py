@@ -71,10 +71,18 @@ def _build_client() -> Client:
     except LoginRequired as exc:
         raise RuntimeError(
             "Instagram: sessionid rejected (login_required). "
-            "Your INSTAGRAM_SESSION_ID may have expired — re-extract it from "
+            "Your INSTAGRAM_SESSION_ID has expired — re-extract it from "
             "DevTools → Application → Cookies → https://www.instagram.com"
         ) from exc
     except Exception as exc:
+        err_msg = str(exc).lower()
+        if "redirect" in err_msg:
+            raise RuntimeError(
+                "Instagram: session expired (redirect loop). "
+                "Your INSTAGRAM_SESSION_ID is no longer valid. "
+                "Re-login at instagram.com and copy a fresh sessionid from "
+                "DevTools → Application → Cookies → https://www.instagram.com"
+            ) from exc
         raise RuntimeError(
             f"Instagram: login_by_sessionid failed — {exc}"
         ) from exc
@@ -378,11 +386,17 @@ class InstagramCollector:
         # ── Social graph (opt-in — costs extra requests, so off by default) ──
         network_posts: list[Post] = []
         if include_social_graph:
-            network_posts = self._collect_social_graph(
-                username, user_id, user.is_private,
-                user.follower_count, user.following_count,
-                follower_limit, following_limit,
-            )
+            try:
+                network_posts = self._collect_social_graph(
+                    username, user_id, user.is_private,
+                    user.follower_count, user.following_count,
+                    follower_limit, following_limit,
+                )
+            except (ValueError, Exception) as exc:
+                log.warning(
+                    "Instagram: social graph failed for @%s — returning profile+posts without it. Error: %s",
+                    username, exc,
+                )
 
         all_posts = posts + network_posts
         all_posts.sort(key=lambda p: p.timestamp, reverse=True)

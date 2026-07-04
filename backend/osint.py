@@ -257,13 +257,16 @@ def _parse_maigret_json(raw_json, username: str) -> dict:
 
     log.info("Maigret: '%s' found on %d / %d platforms", username, found_count, total_checked)
 
-    return {
+    from lead_scorer import score_maigret_results
+
+    result = {
         "username": username,
         "total_found": found_count,
         "total_checked": total_checked,
         "categories": categories,
         "linked_accounts": linked_accounts,
     }
+    return score_maigret_results(result)
 
 
 def _empty_result(username: str) -> dict:

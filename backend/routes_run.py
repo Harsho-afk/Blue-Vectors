@@ -142,10 +142,12 @@ async def _run_investigation(case_id: int, user_id: int) -> AsyncGenerator[str, 
                     conn.close()
 
                 total_found = maigret_result.get("total_found", 0)
+                lead_summary = maigret_result.get("lead_summary", {})
                 yield _sse({
                     "step": "maigret", "status": "done",
                     "seed": username, "found": total_found,
-                    "message": f"Found on {total_found} platforms",
+                    "lead_summary": lead_summary,
+                    "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
                 })
 
                 # Deep-collect from supported platforms

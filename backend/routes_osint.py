@@ -17,6 +17,7 @@ from pydantic import BaseModel, EmailStr
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
 from collector.phone import PhoneCollector
+from lead_scorer import score_maigret_results
 
 router = APIRouter(prefix="/api/cases", tags=["osint"])
 
@@ -186,6 +187,9 @@ def list_osint_lookups(
         result_data = row["result_json"]
         if isinstance(result_data, str):
             result_data = json.loads(result_data)
+
+        if row["lookup_type"] == "maigret" and "lead_summary" not in result_data:
+            result_data = score_maigret_results(result_data)
 
         lookups.append({
             "id": row["id"],

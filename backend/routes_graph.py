@@ -190,44 +190,113 @@ def get_case_graph(case_id: int, current_user: dict = Depends(get_current_user))
                     "detail": link_detail,
                 })
 
-        # ─── 5. GitHub Network Edges ─────────────────────────────────────────
-        # Get network posts (followers/following lists)
-        github_accounts = [a for a in accounts if a["platform"] == "github"]
-        github_usernames = {a["username"].lower(): a["id"] for a in github_accounts}
+        # ─── 5. Network Edges (GitHub + Twitter + Instagram) ────────────────
+        # All platforms store followers/following as synthetic posts with
+        # metadata.type='network', metadata.direction, metadata.logins[]
+        all_account_ids = [a["id"] for a in accounts]
+        # Map platform:username_lower -> account_id for cross-matching
+        platform_username_map = {}
+        for a in accounts:
+            platform_username_map[(a["platform"], a["username"].lower())] = a["id"]
 
-        if github_accounts:
-            account_ids = [a["id"] for a in github_accounts]
-            placeholders = ",".join(["%s"] * len(account_ids))
+        # Track follower/following sets per account for mutual computation
+        followers_of = {}   # account_id -> set of logins
+        following_of = {}   # account_id -> set of logins
+        account_platform = {a["id"]: a["platform"] for a in accounts}
+
+        if all_account_ids:
+            placeholders = ",".join(["%s"] * len(all_account_ids))
             cur.execute(
                 f"""SELECT account_id, metadata FROM posts
                     WHERE account_id IN ({placeholders})
                     AND metadata->>'type' = 'network'""",
-                tuple(account_ids),
+                tuple(all_account_ids),
             )
+            seen_network_edges = set()
             for row in cur.fetchall():
                 r = dict(row)
                 meta = _parse_json(r["metadata"])
                 direction = meta.get("direction", "")
                 logins = meta.get("logins", [])
-                source_nid = f"account:{r['account_id']}"
+                source_aid = r["account_id"]
+                source_nid = f"account:{source_aid}"
+                platform = account_platform.get(source_aid, "")
 
+                # Store for mutual computation
+                login_set = {l.lower() for l in logins}
+                if direction == "followers":
+                    followers_of[source_aid] = login_set
+                elif direction == "following":
+                    following_of[source_aid] = login_set
+
+                # Create edges to other collected accounts on the same platform
                 for login in logins:
                     login_lower = login.lower()
-                    if login_lower in github_usernames:
-                        target_aid = github_usernames[login_lower]
-                        if target_aid == r["account_id"]:
-                            continue
-                        target_nid = f"account:{target_aid}"
-                        edge_label = "follows" if direction == "following" else "followed by"
-                        edges.append({
-                            "source": source_nid,
-                            "target": target_nid,
-                            "type": "network",
-                            "label": edge_label,
-                            "confidence": 1.0,
-                            "evidence_class": "network",
-                            "platform": "github",
-                        })
+                    target_aid = platform_username_map.get((platform, login_lower))
+                    if not target_aid or target_aid == source_aid:
+                        continue
+                    edge_key = (source_aid, target_aid, direction)
+                    if edge_key in seen_network_edges:
+                        continue
+                    seen_network_edges.add(edge_key)
+
+                    edge_label = "follows" if direction == "following" else "followed by"
+                    edges.append({
+                        "source": source_nid,
+                        "target": f"account:{target_aid}",
+                        "type": "network",
+                        "label": edge_label,
+                        "confidence": 1.0,
+                        "evidence_class": "network",
+                        "platform": platform,
+                    })
+
+        # ─── 5b. Mutual followers between accounts on same platform ──────
+        # For each pair of accounts on the same platform, compute shared followers
+        from itertools import combinations
+        platform_groups = {}
+        for a in accounts:
+            platform_groups.setdefault(a["platform"], []).append(a["id"])
+
+        for plat, aids in platform_groups.items():
+            if len(aids) < 2:
+                continue
+            for aid_a, aid_b in combinations(aids, 2):
+                followers_a = followers_of.get(aid_a, set())
+                followers_b = followers_of.get(aid_b, set())
+                following_a = following_of.get(aid_a, set())
+                following_b = following_of.get(aid_b, set())
+
+                # Shared followers = people who follow both
+                shared_followers = followers_a & followers_b
+                # Shared following = people both accounts follow
+                shared_following = following_a & following_b
+                total_shared = shared_followers | shared_following
+
+                if len(total_shared) >= 2:
+                    union_followers = followers_a | followers_b
+                    union_following = following_a | following_b
+                    union_total = union_followers | union_following
+                    jaccard = len(total_shared) / len(union_total) if union_total else 0
+
+                    mutual_list = sorted(total_shared)[:50]
+                    edges.append({
+                        "source": f"account:{aid_a}",
+                        "target": f"account:{aid_b}",
+                        "type": "mutual_network",
+                        "label": f"{len(total_shared)} mutual connections",
+                        "confidence": min(0.95, 0.3 + jaccard * 2),
+                        "evidence_class": "network",
+                        "platform": plat,
+                        "detail": (
+                            f"{len(shared_followers)} shared followers, "
+                            f"{len(shared_following)} shared following "
+                            f"(Jaccard: {jaccard:.2f})"
+                        ),
+                        "shared_count": len(total_shared),
+                        "jaccard": round(jaccard, 3),
+                        "mutual_usernames": mutual_list,
+                    })
 
         # ─── 6. Maigret Discovery Nodes ──────────────────────────────────────
         cur.execute(
@@ -266,8 +335,8 @@ def get_case_graph(case_id: int, current_user: dict = Depends(get_current_user))
                         break
                     platform_name = p.get("platform", "").lower().replace(" ", "_")
                     url = p.get("url", "")
-                    parsed = p.get("parsed_data", {})
-                    username_found = parsed.get("username", "") or ""
+                    parsed = p.get("parsed_data") or {}
+                    username_found = parsed.get("username", "") or "" if isinstance(parsed, dict) else ""
 
                     # Skip if already collected as a full account
                     if (platform_name, username_found.lower()) in collected_platforms:
@@ -360,6 +429,8 @@ def get_case_graph(case_id: int, current_user: dict = Depends(get_current_user))
             "hard_links": sum(1 for e in edges if e.get("evidence_class") == "hard_link"),
             "correlations": sum(1 for e in edges if e["type"] == "correlation"),
             "network_edges": sum(1 for e in edges if e["type"] == "network"),
+            "mutual_connections": sum(1 for e in edges if e["type"] == "mutual_network"),
+            "mutual_total_shared": sum(e.get("shared_count", 0) for e in edges if e["type"] == "mutual_network"),
         }
 
     finally:

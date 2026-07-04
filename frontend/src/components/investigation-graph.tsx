@@ -62,6 +62,8 @@ interface GraphStats {
   hard_links: number
   correlations: number
   network_edges: number
+  mutual_connections: number
+  mutual_total_shared: number
 }
 
 interface GraphData {
@@ -183,7 +185,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
     return () => observer.disconnect()
   }, [])
 
-  // Filter nodes based on toggle
+  // Filter nodes based on toggle + compute parallel edge offsets
   const filteredData = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] }
 
@@ -200,6 +202,26 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
         source: e.source,
         target: e.target,
       }))
+
+    // Compute parallel edge indices for same node pair
+    const pairCount: Record<string, number> = {}
+    const pairIndex: number[] = []
+    for (const link of links) {
+      const s = typeof link.source === 'object' ? (link.source as any).id : link.source
+      const t = typeof link.target === 'object' ? (link.target as any).id : link.target
+      const key = [s, t].sort().join('|')
+      const idx = pairCount[key] || 0
+      pairCount[key] = idx + 1
+      pairIndex.push(idx)
+    }
+    // Attach _parallelIndex and _parallelTotal to each link
+    for (let i = 0; i < links.length; i++) {
+      const s = typeof links[i].source === 'object' ? (links[i].source as any).id : links[i].source
+      const t = typeof links[i].target === 'object' ? (links[i].target as any).id : links[i].target
+      const key = [s, t].sort().join('|')
+      ;(links[i] as any)._parallelIndex = pairIndex[i]
+      ;(links[i] as any)._parallelTotal = pairCount[key]
+    }
 
     return { nodes: [...visibleNodes], links }
   }, [graphData, showDiscoveries])
@@ -329,7 +351,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
     [highlightNodes, hoverNode]
   )
 
-  // Custom link rendering
+  // Custom link rendering with parallel edge support
   const drawLink = useCallback(
     (link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const edge = link as GraphEdge & { source: { x: number; y: number }; target: { x: number; y: number } }
@@ -355,15 +377,24 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       if (dash) ctx.setLineDash(dash.map((d) => d / globalScale))
       else ctx.setLineDash([])
 
-      // Draw curved path for visual distinction
+      // Parallel edge offset — spread multiple edges between same node pair
+      const parallelIndex = (link as any)._parallelIndex || 0
+      const parallelTotal = (link as any)._parallelTotal || 1
       const midX = (src.x + tgt.x) / 2
       const midY = (src.y + tgt.y) / 2
       const dx = tgt.x - src.x
       const dy = tgt.y - src.y
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      const offset = Math.min(dist * 0.1, 15)
-      const cpX = midX + (dy / dist) * offset
-      const cpY = midY - (dx / dist) * offset
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const normX = dy / dist
+      const normY = -(dx / dist)
+
+      // Each parallel edge gets a different offset from center
+      const spread = 25
+      const offsetVal = parallelTotal === 1
+        ? spread * 0.3
+        : (parallelIndex - (parallelTotal - 1) / 2) * spread
+      const cpX = midX + normX * offsetVal
+      const cpY = midY + normY * offsetVal
 
       ctx.beginPath()
       ctx.moveTo(src.x, src.y)
@@ -371,14 +402,16 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Draw confidence label on hover
-      if (isHighlighted && highlightEdges.size > 0 && globalScale > 1.5) {
+      // Label — always show at moderate zoom, positioned along the curve
+      if (globalScale > 0.8) {
+        const labelX = (src.x + 2 * cpX + tgt.x) / 4
+        const labelY = (src.y + 2 * cpY + tgt.y) / 4
         const labelSize = Math.max(3, 8 / globalScale)
         ctx.font = `${labelSize}px Inter, sans-serif`
         ctx.textAlign = 'center'
         ctx.fillStyle = color
-        ctx.globalAlpha = 1
-        ctx.fillText(edge.label || '', cpX, cpY - 3 / globalScale)
+        ctx.globalAlpha = isHighlighted ? 0.9 : 0.15
+        ctx.fillText(edge.label || '', labelX, labelY - 2 / globalScale)
       }
 
       ctx.restore()
@@ -460,6 +493,12 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
           <Badge variant='outline' className='gap-1'>
             <span className='h-2 w-2 rounded-full bg-purple-500' />
             {graphData.stats.network_edges} network
+          </Badge>
+        )}
+        {graphData.stats.mutual_total_shared > 0 && (
+          <Badge variant='outline' className='gap-1'>
+            <span className='h-2 w-2 rounded-full bg-cyan-500' />
+            {graphData.stats.mutual_total_shared} mutuals
           </Badge>
         )}
       </div>
@@ -549,6 +588,9 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
           />
         </div>
       </Card>
+
+      {/* ── Mutual Connections Panel (always visible if mutuals exist) ── */}
+      <MutualConnectionsPanel edges={graphData.edges} />
 
       {/* ── Detail Panel ── */}
       {selectedNode && (
@@ -669,6 +711,7 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
               {edge.type === 'network' && `Social network — ${edge.platform || ''}`}
               {edge.type === 'coordination' && 'Behavioral coordination signal'}
               {edge.type === 'discovery' && 'Unverified discovery link'}
+              {edge.type === 'mutual_network' && `Mutual connections — ${edge.platform || ''}`}
               {edge.type === 'seed_to_account' && 'Seed → collected account'}
             </p>
           </div>
@@ -747,6 +790,92 @@ function EdgeDetailPanel({ edge, onClose }: { edge: GraphEdge; onClose: () => vo
             <p className='mt-0.5 text-xs'>{edge.detail}</p>
           </div>
         )}
+
+        {/* Mutual usernames list */}
+        {(edge as any).mutual_usernames && (edge as any).mutual_usernames.length > 0 && (
+          <div>
+            <span className='text-xs font-medium text-muted-foreground'>
+              Mutual Accounts ({(edge as any).mutual_usernames.length})
+            </span>
+            <div className='mt-1.5 max-h-48 overflow-y-auto rounded-md bg-muted/30 p-2'>
+              <div className='grid grid-cols-2 gap-x-3 gap-y-1'>
+                {((edge as any).mutual_usernames as string[]).map((username: string) => (
+                  <span key={username} className='truncate text-[11px] text-muted-foreground'>
+                    @{username}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Mutual Connections Panel ──
+
+function MutualConnectionsPanel({ edges }: { edges: GraphEdge[] }) {
+  const mutualEdges = edges.filter((e) => e.type === 'mutual_network')
+  if (mutualEdges.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className='pb-2'>
+        <CardTitle className='flex items-center gap-2 text-sm font-medium'>
+          <span className='h-3 w-3 rounded-full bg-cyan-500' />
+          Mutual Connections
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className='space-y-4'>
+          {mutualEdges.map((edge, i) => {
+            const src = typeof edge.source === 'object' ? (edge.source as any).label || (edge.source as any).id : edge.source
+            const tgt = typeof edge.target === 'object' ? (edge.target as any).label || (edge.target as any).id : edge.target
+            const usernames = (edge as any).mutual_usernames as string[] | undefined
+            const sharedCount = (edge as any).shared_count as number | undefined
+            const jaccard = (edge as any).jaccard as number | undefined
+
+            return (
+              <div key={i}>
+                <div className='mb-2 flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <Badge variant='outline' className='border-purple-500/50 text-[10px] text-purple-400'>
+                      {edge.platform}
+                    </Badge>
+                    <span className='text-xs text-muted-foreground'>
+                      {src} ↔ {tgt}
+                    </span>
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <Badge variant='secondary' className='text-[10px]'>
+                      {sharedCount ?? 0} shared
+                    </Badge>
+                    {jaccard != null && (
+                      <Badge variant='outline' className='text-[10px]'>
+                        Jaccard: {(jaccard * 100).toFixed(1)}%
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {edge.detail && (
+                  <p className='mb-2 text-[11px] text-muted-foreground'>{edge.detail}</p>
+                )}
+                {usernames && usernames.length > 0 && (
+                  <div className='max-h-52 overflow-y-auto rounded-md bg-muted/30 p-2'>
+                    <div className='grid grid-cols-3 gap-x-4 gap-y-1 sm:grid-cols-4 md:grid-cols-5'>
+                      {usernames.map((u) => (
+                        <span key={u} className='truncate text-[11px] text-muted-foreground'>
+                          @{u}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </CardContent>
     </Card>
   )
