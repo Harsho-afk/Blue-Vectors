@@ -1,17 +1,20 @@
 """
 ARIA — OSINT Lookup routes
-POST /api/cases/{case_id}/osint/username-search   { username }  → platforms found
-POST /api/cases/{case_id}/osint/breach-lookup      { email }     → breach list
+
+POST /api/cases/{case_id}/osint/username-search   { username, max_sites? }  → Maigret results
+POST /api/cases/{case_id}/osint/breach-lookup      { email }                → breach list
 GET  /api/cases/{case_id}/osint                    list all OSINT lookups for a case
+POST /api/cases/{case_id}/osint/import-account     { platform, username, url, ... } → account_id
 """
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
 from auth import get_current_user, get_db_conn
-from osint import username_search, breach_lookup, save_username_search, save_breach_lookup
+from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
 
 router = APIRouter(prefix="/api/cases", tags=["osint"])
 
@@ -20,10 +23,21 @@ router = APIRouter(prefix="/api/cases", tags=["osint"])
 
 class UsernameSearchRequest(BaseModel):
     username: str
+    max_sites: int = 500
 
 
 class BreachLookupRequest(BaseModel):
     email: EmailStr
+
+
+class ImportAccountRequest(BaseModel):
+    platform: str
+    username: str
+    url: str
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    location: Optional[str] = None
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -34,8 +48,7 @@ def _check_case_ownership(conn, case_id: int, user_id: int):
     row = cur.fetchone()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
-    owner_id = row["investigator_id"] if isinstance(row, dict) else row[0]
-    if owner_id != user_id:
+    if row["investigator_id"] != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
 
 
@@ -53,29 +66,15 @@ async def run_username_search(
     finally:
         conn.close()
 
-    result = await username_search(body.username)
+    result = await run_maigret(body.username, max_sites=body.max_sites)
 
     conn = get_db_conn()
     try:
-        lookup_id = save_username_search(conn, case_id, result)
+        lookup_id = save_maigret_search(conn, case_id, result)
     finally:
         conn.close()
 
-    return {
-        "lookup_id": lookup_id,
-        "username": result.username,
-        "platforms_checked": result.platforms_checked,
-        "platforms_found": [
-            {
-                "platform": p.platform,
-                "url": p.url,
-                "response_time_ms": p.response_time_ms,
-            }
-            for p in result.platforms_found
-        ],
-        "platforms_found_count": len(result.platforms_found),
-        "errors_count": len(result.errors),
-    }
+    return {"lookup_id": lookup_id, **result}
 
 
 @router.post("/{case_id}/osint/breach-lookup")
@@ -146,6 +145,7 @@ def list_osint_lookups(
 
         lookups.append({
             "id": row["id"],
+            "case_id": row["case_id"],
             "lookup_type": row["lookup_type"],
             "input_value": row["input_value"],
             "result": result_data,
@@ -153,3 +153,44 @@ def list_osint_lookups(
         })
 
     return {"lookups": lookups}
+
+
+@router.post("/{case_id}/osint/import-account", status_code=status.HTTP_201_CREATED)
+def import_account(
+    case_id: int,
+    body: ImportAccountRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Import a discovered OSINT account into the case's accounts table."""
+    conn = get_db_conn()
+    try:
+        _check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO accounts (case_id, platform, username, display_name, bio,
+                                  location, profile_image_url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (case_id, platform, username) DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                bio = EXCLUDED.bio,
+                location = EXCLUDED.location,
+                profile_image_url = EXCLUDED.profile_image_url
+            RETURNING id
+            """,
+            (
+                case_id,
+                body.platform.lower(),
+                body.username,
+                body.display_name,
+                body.bio,
+                body.location,
+                body.avatar_url,
+            ),
+        )
+        account_id = cur.fetchone()["id"]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"account_id": account_id, "message": "Account imported"}

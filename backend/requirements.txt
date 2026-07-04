@@ -8,4 +8,8 @@ bcrypt
 python-jose[cryptography]
 psycopg2-binary
 email-validator
-sherlock-project
+maigret
+rapidfuzz>=3.0
+sentence-transformers>=2.2
+scipy>=1.10
+numpy>=1.24

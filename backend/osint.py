@@ -1,9 +1,9 @@
 """
 ARIA — OSINT Lookup Module
 
-1. Username enumeration: Sherlock project site database (400+ platforms)
-   Uses sherlock-project's data.json for site definitions with our own
-   async httpx checker for concurrent speed.
+1. Username enumeration: Maigret (500+ platforms, structured profile data,
+   category tagging, profile extraction)
+   Primary: library API. Fallback: subprocess CLI.
 
 2. Breach lookup: XposedOrNot free API (no key required, real data)
    Falls back to HIBP v3 if HIBP_API_KEY is set.
@@ -13,7 +13,7 @@ import os
 import asyncio
 import json
 import logging
-import re
+import tempfile
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -26,182 +26,276 @@ log = logging.getLogger("aria.osint")
 
 
 # ──────────────────────────────────────────────
-# Sherlock site database
+# Category mapping (Maigret tags → ARIA categories)
 # ──────────────────────────────────────────────
 
-def _load_sherlock_sites() -> dict:
-    """Load site definitions from the installed sherlock-project package."""
-    for module_name in ("sherlock_project", "sherlock"):
-        try:
-            mod = __import__(module_name)
-            pkg_dir = os.path.dirname(mod.__file__)
-            data_path = os.path.join(pkg_dir, "resources", "data.json")
-            if not os.path.exists(data_path):
-                continue
-            with open(data_path, encoding="utf-8") as f:
-                data = json.load(f)
-            sites = {k: v for k, v in data.items() if isinstance(v, dict) and "url" in v}
-            log.info("Sherlock: loaded %d site definitions from %s", len(sites), module_name)
-            return sites
-        except (ImportError, Exception):
-            continue
-    log.warning("sherlock-project not installed — run: pip install sherlock-project")
-    return {}
+CATEGORY_MAP = {
+    "social": "social_media",
+    "dating": "social_media",
+    "microblogging": "social_media",
 
+    "coding": "developer",
+    "hacking": "developer",
+    "tech": "developer",
+    "openSource": "developer",
 
-SHERLOCK_SITES: dict = _load_sherlock_sites()
+    "gaming": "gaming",
+    "esports": "gaming",
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/json,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "video": "streaming",
+    "music": "streaming",
+    "podcast": "streaming",
+    "audio": "streaming",
+
+    "business": "professional",
+    "career": "professional",
+    "finance": "professional",
+
+    "art": "creative",
+    "design": "creative",
+    "photography": "creative",
+    "writing": "creative",
+    "blog": "creative",
+
+    "messenger": "messaging",
+    "communication": "messaging",
+
+    "shopping": "shopping",
+    "marketplace": "shopping",
+    "crowdfunding": "shopping",
+}
+
+CATEGORY_ORDER = [
+    "social_media", "developer", "gaming", "streaming",
+    "professional", "creative", "messaging", "shopping", "other",
+]
+
+CATEGORY_DISPLAY = {
+    "social_media": "Social Media",
+    "developer": "Developer & Tech",
+    "gaming": "Gaming",
+    "streaming": "Streaming & Media",
+    "professional": "Professional",
+    "creative": "Creative & Art",
+    "messaging": "Messaging",
+    "shopping": "Shopping & Finance",
+    "other": "Other Platforms",
 }
 
 
 # ──────────────────────────────────────────────
-# Username Enumeration (Sherlock-powered)
+# Maigret Username Enumeration
 # ──────────────────────────────────────────────
 
-@dataclass
-class PlatformResult:
-    platform: str
-    url: str
-    exists: bool
-    status_code: int
-    response_time_ms: int
-
-
-@dataclass
-class UsernameSearchResult:
-    username: str
-    platforms_checked: int
-    platforms_found: list[PlatformResult] = field(default_factory=list)
-    platforms_not_found: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-STATUS_SKIPPED = -1
-
-
-async def _check_site(
-    client: httpx.AsyncClient,
-    site_name: str,
-    site_data: dict,
-    username: str,
-    semaphore: asyncio.Semaphore,
-) -> PlatformResult:
-    """Check if a username exists on a site using Sherlock's detection logic."""
-    url = site_data["url"].replace("{}", username)
-    error_type = site_data.get("errorType", "status_code")
-
-    regex = site_data.get("regexCheck")
-    if regex:
-        try:
-            if not re.match(regex, username):
-                return PlatformResult(site_name, url, False, STATUS_SKIPPED, 0)
-        except re.error:
-            pass
-
-    async with semaphore:
-        try:
-            req_headers = dict(HEADERS)
-            site_headers = site_data.get("headers")
-            if site_headers and isinstance(site_headers, dict):
-                req_headers.update(site_headers)
-
-            resp = await client.get(
-                url, headers=req_headers, follow_redirects=True, timeout=10,
-            )
-            sc = resp.status_code
-            elapsed = int(resp.elapsed.total_seconds() * 1000)
-
-            exists = False
-
-            if error_type == "status_code":
-                exists = (200 <= sc < 300)
-                if exists:
-                    body_sample = resp.text[:100_000].lower()
-                    if username.lower() not in body_sample:
-                        exists = False
-
-            elif error_type == "message":
-                error_msg = site_data.get("errorMsg", "")
-                if 200 <= sc < 300:
-                    if isinstance(error_msg, list):
-                        exists = not any(msg in resp.text for msg in error_msg)
-                    elif error_msg:
-                        exists = error_msg not in resp.text
-                    else:
-                        exists = True
-
-            elif error_type == "response_url":
-                error_url = site_data.get("errorUrl", "")
-                if error_url:
-                    exists = error_url not in str(resp.url)
-                else:
-                    exists = (200 <= sc < 300)
-
-            return PlatformResult(site_name, url, exists, sc, elapsed)
-
-        except Exception:
-            return PlatformResult(site_name, url, False, 0, 0)
-
-
-async def username_search(username: str, max_concurrent: int = 30) -> UsernameSearchResult:
+async def run_maigret(username: str, max_sites: int = 500) -> dict:
     """
-    Check if a username exists across 400+ platforms using Sherlock's site DB.
-
-    Args:
-        username: The handle to search for (no @/u/ prefix).
-        max_concurrent: Max parallel HTTP requests.
-
-    Returns:
-        UsernameSearchResult with found/not-found/error breakdown.
+    Search for a username across platforms using Maigret CLI subprocess.
+    Returns a structured dict with categorized results.
     """
     username = username.strip().lstrip("@").lstrip("u/")
+    log.info("OSINT: Maigret search for '%s' (top %d sites)", username, max_sites)
 
-    if not SHERLOCK_SITES:
-        return UsernameSearchResult(
-            username=username, platforms_checked=0,
-            errors=["sherlock-project package not installed"],
-        )
+    try:
+        return await _run_maigret_subprocess(username, max_sites)
+    except Exception as exc:
+        log.error("Maigret search failed: %s", exc)
+        return {
+            "username": username,
+            "total_found": 0,
+            "total_checked": 0,
+            "categories": {},
+            "linked_accounts": [],
+            "error": f"Maigret search failed: {exc}",
+        }
 
-    sites = {k: v for k, v in SHERLOCK_SITES.items() if not v.get("isNSFW", False)}
 
-    log.info("OSINT: username search for '%s' across %d sites", username, len(sites))
-
-    semaphore = asyncio.Semaphore(max_concurrent)
-    result = UsernameSearchResult(username=username, platforms_checked=len(sites))
-
-    async with httpx.AsyncClient(headers=HEADERS) as client:
-        tasks = [
-            _check_site(client, name, data, username, semaphore)
-            for name, data in sites.items()
+async def _run_maigret_subprocess(username: str, max_sites: int) -> dict:
+    """Run maigret CLI as a subprocess and parse the JSON output."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            "maigret", username,
+            "--top-sites", str(max_sites),
+            "--json", "simple",
+            "--folderoutput", tmpdir,
+            "--no-color",
+            "--no-progressbar",
+            "--no-autoupdate",
         ]
-        platform_results = await asyncio.gather(*tasks)
 
-    for pr in platform_results:
-        if pr.status_code == STATUS_SKIPPED:
+        log.info("Maigret subprocess: %s", " ".join(cmd))
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+
+        if stderr:
+            log.warning("Maigret stderr (last 1000 chars): %s",
+                        stderr.decode(errors="replace")[-1000:])
+        if stdout:
+            log.info("Maigret stdout: %s",
+                     stdout.decode(errors="replace")[-500:])
+
+        expected_name = f"report_{username}_simple.json"
+        json_files = [f for f in os.listdir(tmpdir) if f.endswith(".json")]
+
+        if not json_files:
+            raise FileNotFoundError(
+                f"Maigret produced no JSON output (exit {proc.returncode})"
+            )
+
+        primary = expected_name if expected_name in json_files else json_files[0]
+        log.info("Maigret output files: %s (using %s)", json_files, primary)
+
+        with open(os.path.join(tmpdir, primary), encoding="utf-8") as fh:
+            raw = json.load(fh)
+
+        return _parse_maigret_json(raw, username)
+
+
+# ──────────────────────────────────────────────
+# Result parser
+# ──────────────────────────────────────────────
+
+def _parse_maigret_json(raw_json, username: str) -> dict:
+    """
+    Parse maigret --json simple output into ARIA's categorized format.
+
+    The JSON is a dict keyed by site name. Each value has:
+      url_user        — profile URL
+      status.status   — "Claimed" / "Available" / etc.
+      status.ids      — extracted profile data (fullname, bio, image, …)
+      status.tags     — list of tag strings
+      is_similar      — True for fuzzy/similar matches
+    """
+    if not isinstance(raw_json, dict):
+        return _empty_result(username)
+
+    categories: dict[str, list] = {}
+    found_count = 0
+    total_checked = len(raw_json)
+    linked_accounts: list[dict] = []
+    seen_alt_usernames: set[str] = set()
+
+    for site_name, entry in raw_json.items():
+        if not isinstance(entry, dict):
             continue
-        elif pr.status_code == 0:
-            result.errors.append(f"{pr.platform}: unreachable")
-        elif pr.exists:
-            result.platforms_found.append(pr)
-        else:
-            result.platforms_not_found.append(pr.platform)
 
-    result.platforms_found.sort(key=lambda p: p.platform)
-    log.info(
-        "OSINT: '%s' found on %d / %d platforms (%d errors)",
-        username, len(result.platforms_found), len(sites), len(result.errors),
-    )
-    return result
+        status_obj = entry.get("status", {})
+        if isinstance(status_obj, str):
+            status_str = status_obj
+            ids = {}
+            tags = []
+        elif isinstance(status_obj, dict):
+            status_str = status_obj.get("status", "")
+            ids = status_obj.get("ids", {}) or {}
+            tags = status_obj.get("tags", []) or []
+        else:
+            continue
+
+        if "Claimed" not in status_str:
+            continue
+
+        if entry.get("is_similar", False):
+            continue
+
+        found_count += 1
+        url = entry.get("url_user", "")
+
+        if not tags:
+            site_def = entry.get("site", {})
+            if isinstance(site_def, dict):
+                tags = site_def.get("tags", []) or []
+
+        category = _map_tags_to_category(tags)
+
+        parsed_data = {}
+        for field, keys in [
+            ("display_name", ["fullname", "name", "display_name"]),
+            ("bio", ["bio", "description", "about"]),
+            ("avatar_url", ["image", "avatar", "avatar_url", "photo"]),
+            ("location", ["location", "country", "city", "timezone"]),
+        ]:
+            for k in keys:
+                val = ids.get(k)
+                if val and str(val).strip() and str(val).strip().lower() != "true":
+                    parsed_data[field] = str(val).strip()
+                    break
+
+        for k in ("follower_count", "followers"):
+            val = ids.get(k)
+            if val is not None:
+                try:
+                    parsed_data["followers"] = int(val)
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        categories.setdefault(category, []).append({
+            "platform": status_obj.get("site_name", site_name),
+            "url": url,
+            "status": "Claimed",
+            "tags": list(tags),
+            "parsed_data": parsed_data if parsed_data else None,
+        })
+
+        alt_usernames = entry.get("ids_usernames", {}) or {}
+        for alt_name, _ in alt_usernames.items():
+            if alt_name.lower() != username.lower() and alt_name not in seen_alt_usernames:
+                seen_alt_usernames.add(alt_name)
+                linked_accounts.append({
+                    "username": alt_name,
+                    "source_platform": site_name,
+                    "source_url": url,
+                    "how_found": f"Found in {site_name} profile metadata",
+                })
+
+    for cat_list in categories.values():
+        cat_list.sort(key=lambda p: p["platform"].lower())
+
+    log.info("Maigret: '%s' found on %d / %d platforms", username, found_count, total_checked)
+
+    return {
+        "username": username,
+        "total_found": found_count,
+        "total_checked": total_checked,
+        "categories": categories,
+        "linked_accounts": linked_accounts,
+    }
+
+
+def _empty_result(username: str) -> dict:
+    return {
+        "username": username,
+        "total_found": 0,
+        "total_checked": 0,
+        "categories": {},
+        "linked_accounts": [],
+    }
+
+
+def _map_tags_to_category(tags: list) -> str:
+    """Map a list of maigret tags to an ARIA category key."""
+    for tag in tags:
+        mapped = CATEGORY_MAP.get(tag)
+        if mapped:
+            return mapped
+    return "other"
+
+
+
+# ──────────────────────────────────────────────
+# Category helpers (for frontend/API consumers)
+# ──────────────────────────────────────────────
+
+def get_category_display_name(category_key: str) -> str:
+    return CATEGORY_DISPLAY.get(category_key, category_key.replace("_", " ").title())
+
+
+def get_category_order() -> list[str]:
+    return list(CATEGORY_ORDER)
 
 
 # ──────────────────────────────────────────────
@@ -386,17 +480,17 @@ async def _hibp_lookup(email: str) -> BreachLookupResult:
 # DB persistence helpers
 # ──────────────────────────────────────────────
 
-def save_username_search(conn, case_id: int, result: UsernameSearchResult) -> int:
-    """Save username search results to osint_lookups table."""
+def save_maigret_search(conn, case_id: int, result: dict) -> int:
+    """Save Maigret username search results to osint_lookups table."""
     cur = conn.cursor()
-    result_json = json.dumps(result.to_dict(), ensure_ascii=False)
+    result_json = json.dumps(result, ensure_ascii=False)
     cur.execute(
         """
         INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-        VALUES (%s, 'sherlock', %s, %s)
+        VALUES (%s, 'maigret', %s, %s)
         RETURNING id
         """,
-        (case_id, result.username, result_json),
+        (case_id, result["username"], result_json),
     )
     conn.commit()
     return cur.fetchone()["id"]
@@ -409,7 +503,7 @@ def save_breach_lookup(conn, case_id: int, result: BreachLookupResult) -> int:
     cur.execute(
         """
         INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-        VALUES (%s, 'hibp', %s, %s)
+        VALUES (%s, 'xposedornot', %s, %s)
         RETURNING id
         """,
         (case_id, result.email, result_json),
@@ -430,8 +524,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ARIA OSINT Lookups")
     sub = parser.add_subparsers(dest="cmd")
 
-    p_user = sub.add_parser("username", help="Search username across platforms (Sherlock)")
+    p_user = sub.add_parser("username", help="Search username across platforms (Maigret)")
     p_user.add_argument("username")
+    p_user.add_argument("--top", type=int, default=500, help="Top N sites to check")
 
     p_breach = sub.add_parser("breach", help="Check email in breaches (XposedOrNot)")
     p_breach.add_argument("email")
@@ -439,16 +534,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.cmd == "username":
-        result = asyncio.run(username_search(args.username))
-        print(f"\nUsername: {result.username}")
-        print(f"Checked: {result.platforms_checked} platforms (Sherlock DB)")
-        print(f"Found on {len(result.platforms_found)} platforms:\n")
-        for p in result.platforms_found:
-            print(f"  [+] {p.platform:20s}  {p.url}  ({p.response_time_ms}ms)")
-        if result.errors:
-            print(f"\nErrors ({len(result.errors)}):")
-            for e in result.errors:
-                print(f"  [!] {e}")
+        result = asyncio.run(run_maigret(args.username, max_sites=args.top))
+        print(f"\nUsername: {result['username']}")
+        print(f"Checked: {result['total_checked']} platforms")
+        print(f"Found on {result['total_found']} platforms:\n")
+        for cat_key in CATEGORY_ORDER:
+            platforms = result["categories"].get(cat_key, [])
+            if not platforms:
+                continue
+            print(f"  {CATEGORY_DISPLAY[cat_key]} ({len(platforms)}):")
+            for p in platforms:
+                print(f"    [+] {p['platform']:20s}  {p['url']}")
+        if result.get("error"):
+            print(f"\nError: {result['error']}")
 
     elif args.cmd == "breach":
         result = asyncio.run(breach_lookup(args.email))

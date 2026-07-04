@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ProfileCard from "./ProfileCard";
 import PostRow from "./PostRow";
+import OsintPanel from "./OsintPanel";
+import CorrelationResultRow from "./CorrelationResultRow";
 import { API } from "../lib/api";
 
 const EMPTY_ID = { identifier_type: "username", value: "", platform_hint: "" };
@@ -13,7 +15,6 @@ export default function CaseDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [collecting, setCollecting] = useState({});
-  const [osintRunning, setOsintRunning] = useState({});
 
   // Add-identifier form state
   const [newIds, setNewIds] = useState([{ ...EMPTY_ID }]);
@@ -22,6 +23,10 @@ export default function CaseDetail() {
 
   // Per-account post visibility: { accountId: { filter, expanded } }
   const [postView, setPostView] = useState({});
+
+  // Correlation
+  const [correlationResults, setCorrelationResults] = useState([]);
+  const [isCorrelating, setIsCorrelating] = useState(false);
 
   const fetchCase = () => {
     fetch(`${API}/api/cases/${id}`, { credentials: "include" })
@@ -34,7 +39,14 @@ export default function CaseDetail() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchCase(); }, [id]);
+  const fetchResults = () => {
+    fetch(`${API}/api/cases/${id}/results`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : Promise.resolve({ results: [] }))
+      .then(data => setCorrelationResults(data.results || []))
+      .catch(() => {});
+  };
+
+  useEffect(() => { fetchCase(); fetchResults(); }, [id]);
 
   const handleCollect = async (identifier) => {
     if (identifier.identifier_type !== "username") return;
@@ -100,50 +112,26 @@ export default function CaseDetail() {
     }
   };
 
-  // ── OSINT lookups ──
-  const handleUsernameSearch = async (identifier) => {
-    const key = `sherlock-${identifier.id}`;
-    setOsintRunning(prev => ({ ...prev, [key]: true }));
+  // ── Correlation ──
+  const handleCorrelate = async () => {
+    setIsCorrelating(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/cases/${id}/osint/username-search`, {
+      const res = await fetch(`${API}/api/cases/${id}/correlate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ username: identifier.value }),
       });
-      if (!res.ok) {
-        const detail = await res.json().then(d => d.detail).catch(() => res.statusText);
-        throw new Error(detail);
+      if (res.ok) {
+        const data = await res.json();
+        setCorrelationResults(data.results || []);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.detail || "Correlation failed");
       }
-      fetchCase();
     } catch (e) {
-      setError(e.message);
+      setError("Correlation failed: " + e.message);
     } finally {
-      setOsintRunning(prev => ({ ...prev, [key]: false }));
-    }
-  };
-
-  const handleBreachLookup = async (identifier) => {
-    const key = `hibp-${identifier.id}`;
-    setOsintRunning(prev => ({ ...prev, [key]: true }));
-    setError(null);
-    try {
-      const res = await fetch(`${API}/api/cases/${id}/osint/breach-lookup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email: identifier.value }),
-      });
-      if (!res.ok) {
-        const detail = await res.json().then(d => d.detail).catch(() => res.statusText);
-        throw new Error(detail);
-      }
-      fetchCase();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setOsintRunning(prev => ({ ...prev, [key]: false }));
+      setIsCorrelating(false);
     }
   };
 
@@ -225,30 +213,12 @@ export default function CaseDetail() {
                   </span>
                 )}
                 {ident.identifier_type === "username" && (
-                  <>
-                    <button
-                      className={`collect-btn${collecting[ident.id] ? " collect-btn--collecting" : ""}`}
-                      onClick={() => handleCollect(ident)}
-                      disabled={collecting[ident.id]}
-                    >
-                      {collecting[ident.id] ? "COLLECTING..." : "COLLECT"}
-                    </button>
-                    <button
-                      className={`osint-btn${osintRunning[`sherlock-${ident.id}`] ? " osint-btn--running" : ""}`}
-                      onClick={() => handleUsernameSearch(ident)}
-                      disabled={osintRunning[`sherlock-${ident.id}`]}
-                    >
-                      {osintRunning[`sherlock-${ident.id}`] ? "SEARCHING..." : "SHERLOCK"}
-                    </button>
-                  </>
-                )}
-                {ident.identifier_type === "email" && (
                   <button
-                    className={`osint-btn osint-btn--hibp${osintRunning[`hibp-${ident.id}`] ? " osint-btn--running" : ""}`}
-                    onClick={() => handleBreachLookup(ident)}
-                    disabled={osintRunning[`hibp-${ident.id}`]}
+                    className={`collect-btn${collecting[ident.id] ? " collect-btn--collecting" : ""}`}
+                    onClick={() => handleCollect(ident)}
+                    disabled={collecting[ident.id]}
                   >
-                    {osintRunning[`hibp-${ident.id}`] ? "CHECKING..." : "CHECK BREACHES"}
+                    {collecting[ident.id] ? "COLLECTING..." : "COLLECT"}
                   </button>
                 )}
               </div>
@@ -330,85 +300,12 @@ export default function CaseDetail() {
         )}
       </div>
 
-      {/* ── OSINT Results ── */}
-      {caseData.osint_lookups?.length > 0 && (
-        <div className="aria-card" style={{ marginTop: 24 }}>
-          <p className="aria-card__label">OSINT LOOKUPS</p>
-          {caseData.osint_lookups.map(lookup => (
-            <div key={lookup.id} className="osint-result">
-              {lookup.lookup_type === "sherlock" && (
-                <div className="osint-result__section">
-                  <div className="osint-result__header">
-                    <span className="osint-result__badge osint-result__badge--sherlock">SHERLOCK</span>
-                    <span className="osint-result__input">@{lookup.input_value}</span>
-                    <span className="osint-result__count">
-                      {lookup.result?.platforms_found?.length || 0} platforms found
-                    </span>
-                    <span className="osint-result__date">
-                      {new Date(lookup.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  {lookup.result?.platforms_found?.length > 0 && (
-                    <div className="osint-platforms">
-                      {lookup.result.platforms_found.map((p, i) => (
-                        <a
-                          key={i}
-                          href={p.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="osint-platform-tag"
-                        >
-                          {p.platform}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                  {lookup.result?.errors?.length > 0 && (
-                    <p className="osint-result__errors">
-                      {lookup.result.errors.length} platforms unreachable
-                    </p>
-                  )}
-                </div>
-              )}
-              {lookup.lookup_type === "hibp" && (
-                <div className="osint-result__section">
-                  <div className="osint-result__header">
-                    <span className="osint-result__badge osint-result__badge--hibp">BREACH CHECK</span>
-                    <span className="osint-result__input">{lookup.input_value}</span>
-                    <span className="osint-result__count">
-                      {lookup.result?.total_breaches || 0} breaches found
-                    </span>
-                    <span className="osint-result__date">
-                      {new Date(lookup.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  {lookup.result?.error && (
-                    <p className="osint-result__note">{lookup.result.error}</p>
-                  )}
-                  {lookup.result?.breaches?.length > 0 && (
-                    <div className="osint-breaches">
-                      {lookup.result.breaches.map((b, i) => (
-                        <div key={i} className="breach-card">
-                          <div className="breach-card__header">
-                            <span className="breach-card__name">{b.name}</span>
-                            <span className="breach-card__domain">{b.domain}</span>
-                            <span className="breach-card__date">{b.breach_date}</span>
-                          </div>
-                          <div className="breach-card__data">
-                            {b.data_classes?.map((dc, j) => (
-                              <span key={j} className="breach-card__tag">{dc}</span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* ── OSINT Discovery Panel ── */}
+      <OsintPanel
+        caseId={id}
+        identifiers={identifiers}
+        onAccountImported={fetchCase}
+      />
 
       {/* ── Collected accounts + posts ── */}
       {accounts.length > 0 && (
@@ -497,6 +394,34 @@ export default function CaseDetail() {
           <p className="empty-state__sub">use the COLLECT button above to gather data</p>
         </div>
       )}
+
+      {/* ── Correlation Results ── */}
+      <div className="aria-card" style={{ marginTop: 24 }}>
+        <div className="correlation-header">
+          <p className="aria-card__label" style={{ marginBottom: 0 }}>IDENTITY CORRELATION</p>
+          <button
+            className="correlate-btn"
+            onClick={handleCorrelate}
+            disabled={isCorrelating || accounts.length < 2}
+          >
+            {isCorrelating ? "ANALYZING..." : "CORRELATE"}
+          </button>
+        </div>
+
+        {accounts.length < 2 && (
+          <p className="correlation-hint">
+            Collect at least 2 accounts to run correlation analysis
+          </p>
+        )}
+
+        {correlationResults.length > 0 && (
+          <div className="correlation-results">
+            {correlationResults.map((result, i) => (
+              <CorrelationResultRow key={result.id || i} result={result} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

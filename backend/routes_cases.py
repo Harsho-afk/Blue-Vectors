@@ -369,6 +369,61 @@ def add_identifiers(
     return {"added": len(body)}
 
 
+@router.post("/{case_id}/correlate")
+def run_correlation(case_id: int, current_user: dict = Depends(get_current_user)):
+    """Run pairwise identity correlation on all accounts in a case."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+    finally:
+        conn.close()
+
+    from correlator import correlate_case
+    results = correlate_case(case_id)
+
+    return {"results": results}
+
+
+@router.get("/{case_id}/results")
+def get_correlation_results(case_id: int, current_user: dict = Depends(get_current_user)):
+    """Get stored correlation results for a case with per-signal breakdown."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT lr.id, lr.case_id, lr.account_a_id, lr.account_b_id,
+                   lr.confidence, lr.shap_json, lr.created_at,
+                   a1.platform as a_platform, a1.username as a_username,
+                   a1.display_name as a_display_name, a1.profile_image_url as a_avatar,
+                   a2.platform as b_platform, a2.username as b_username,
+                   a2.display_name as b_display_name, a2.profile_image_url as b_avatar
+            FROM linkage_results lr
+            JOIN accounts a1 ON lr.account_a_id = a1.id
+            JOIN accounts a2 ON lr.account_b_id = a2.id
+            WHERE lr.case_id = %s
+            ORDER BY lr.confidence DESC
+            """,
+            (case_id,),
+        )
+        rows = cur.fetchall()
+        results = []
+        for row in rows:
+            r = dict(row)
+            if isinstance(r.get("shap_json"), str):
+                try:
+                    r["shap_json"] = json.loads(r["shap_json"])
+                except (json.JSONDecodeError, TypeError):
+                    r["shap_json"] = {}
+            r["created_at"] = str(r["created_at"]) if r["created_at"] else None
+            results.append(r)
+    finally:
+        conn.close()
+
+    return {"results": results}
+
+
 @router.post("/{case_id}/collect")
 async def collect_for_case(
     case_id: int,
