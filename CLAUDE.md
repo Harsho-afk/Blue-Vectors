@@ -125,30 +125,6 @@ Always provide supporting evidence.
 
 ---
 
-# Legal and Ethical Constraints
-
-The system may only use:
-
-* Publicly available information
-* Public APIs
-* Public profiles
-* Open websites
-* User-provided identifiers
-
-Never suggest:
-
-* Credential theft
-* Hacking
-* Unauthorized access
-* Private information gathering
-* Bypassing authentication
-* Illegal scraping
-* Circumvention techniques
-
-If a requested feature violates ethics or law, refuse and suggest a legal alternative.
-
----
-
 # Recommended Technology Stack
 
 ## Frontend
