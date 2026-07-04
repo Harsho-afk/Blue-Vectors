@@ -26,6 +26,7 @@ class AccountProfile:
     karma: Optional[int] = None  # Reddit only
     follower_count: Optional[int] = None  # Twitter only
     following_count: Optional[int] = None  # Twitter only
+    extra: dict = field(default_factory=dict)  # platform-specific extras (e.g. is_private)
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict — safe for JSON and PostgreSQL JSONB."""
