@@ -6,3 +6,4 @@ cookies.txt
 backend/aria.db
 node_modules/
 dist/
+frontend/.vite/
