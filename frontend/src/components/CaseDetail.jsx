@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ProfileCard from "./ProfileCard";
 import PostRow from "./PostRow";
-
-const API = "http://localhost:8000";
+import { API } from "../lib/api";
 
 const EMPTY_ID = { identifier_type: "username", value: "", platform_hint: "" };
 

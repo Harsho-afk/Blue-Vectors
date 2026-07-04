@@ -1,0 +1,43 @@
+services:
+    postgres:
+        image: postgres:17
+        container_name: aria-postgres
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: aria
+            POSTGRES_USER: aria
+            POSTGRES_PASSWORD: aria_password
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+            - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U aria -d aria']
+            interval: 5s
+            timeout: 5s
+            retries: 10
+
+    backend:
+        build:
+            context: ./backend
+        container_name: aria-backend
+        restart: unless-stopped
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+        ports:
+            - '8000:8000'
+
+    frontend:
+        build:
+            context: ./frontend
+        container_name: aria-frontend
+        restart: unless-stopped
+        depends_on:
+            - backend
+        ports:
+            - '80:80'
+
+volumes:
+    postgres_data:

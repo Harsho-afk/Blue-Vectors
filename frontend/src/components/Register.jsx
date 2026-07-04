@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-
-const API = "http://localhost:8000";
+import { API } from "../lib/api";
 
 export default function Register() {
   const [email, setEmail] = useState("");
