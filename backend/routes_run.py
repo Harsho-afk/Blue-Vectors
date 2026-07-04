@@ -5,12 +5,27 @@ POST /api/cases/{case_id}/run  -> SSE stream of progress events
 
 Orchestrates: Maigret -> deep collectors -> breach -> phone -> correlation -> insights
 Each step streams progress via Server-Sent Events so the frontend can show live updates.
+
+PARALLEL EXECUTION MODEL
+------------------------
+- All seed collectors (username -> Maigret + deep-collect, email -> breach,
+  phone -> phone OSINT) run CONCURRENTLY via asyncio.gather. Each still
+  streams its own progress events; events from different tasks interleave
+  on the SSE stream as they complete, multiplexed through an asyncio.Queue.
+- Deep-collection of multiple platforms discovered for a single username
+  (e.g. Maigret finds both github + reddit) also runs concurrently.
+- Correlation and Insights are independent of each other (insights functions
+  only read accounts/posts/osint_lookups, never linkage_results) so they run
+  CONCURRENTLY too, each offloaded to a worker thread since both are
+  blocking/sync under the hood.
+- The Intelligence briefing runs AFTER correlation + insights finish, since
+  the Analyst LLM prompt is built from both insights and correlation results.
 """
 
 import json
 import logging
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -68,10 +83,234 @@ def _find_collectible_platforms(maigret_result: dict) -> list[str]:
     return sorted(found)
 
 
-async def _run_investigation(case_id: int, user_id: int) -> AsyncGenerator[str, None]:
-    """Async generator that runs the full investigation pipeline and yields SSE events."""
+# ─────────────────────────────────────────────────────────────────────────
+# Per-seed worker coroutines. Each one owns its own DB connections (opened
+# and closed within the coroutine) so they're safe to run concurrently —
+# no connection is ever shared across tasks. Each emits its own SSE events
+# via `emit` (an async callable — in practice `queue.put`) and returns the
+# number of accounts it collected (0 for email/phone, which don't add
+# accounts).
+# ─────────────────────────────────────────────────────────────────────────
 
-    # Load identifiers
+async def _collect_one_platform(case_id: int, platform: str, username: str, emit) -> int:
+    await emit({"step": "collect", "status": "running", "platform": platform, "username": username})
+    try:
+        profile = await collect_async(platform, username)
+        conn = get_db_conn()
+        try:
+            save_to_db(profile, conn, case_id)
+        finally:
+            conn.close()
+        await emit({
+            "step": "collect", "status": "done",
+            "platform": platform, "username": username,
+            "posts": len(profile.posts),
+            "display_name": profile.display_name,
+        })
+        return 1
+    except Exception as e:
+        log.warning("Collection failed for %s/%s: %s", platform, username, e)
+        await emit({
+            "step": "collect", "status": "error",
+            "platform": platform, "username": username,
+            "error": str(e),
+        })
+        return 0
+
+
+async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
+    """Handle one username identifier: direct collect if platform_hint known,
+    otherwise Maigret discovery followed by concurrent deep-collection of
+    every platform found that ARIA has a collector for."""
+    username = ident["value"]
+    platform_hint = ident.get("platform_hint")
+
+    if platform_hint and platform_hint in SUPPORTED_PLATFORMS:
+        return await _collect_one_platform(case_id, platform_hint, username, emit)
+
+    await emit({"step": "maigret", "status": "running", "seed": username, "message": "Searching 500+ platforms..."})
+    try:
+        maigret_result = await run_maigret(username)
+
+        conn = get_db_conn()
+        try:
+            save_maigret_search(conn, case_id, maigret_result)
+        finally:
+            conn.close()
+
+        total_found = maigret_result.get("total_found", 0)
+        lead_summary = maigret_result.get("lead_summary", {})
+        await emit({
+            "step": "maigret", "status": "done",
+            "seed": username, "found": total_found,
+            "lead_summary": lead_summary,
+            "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
+        })
+
+        collectible = _find_collectible_platforms(maigret_result)
+        if not collectible:
+            return 0
+
+        # Deep-collect every discovered platform concurrently.
+        results = await asyncio.gather(
+            *[_collect_one_platform(case_id, platform, username, emit) for platform in collectible],
+            return_exceptions=True,
+        )
+        collected = 0
+        for r in results:
+            if isinstance(r, Exception):
+                log.error("Deep-collect task errored for seed '%s': %s", username, r)
+            else:
+                collected += r
+        return collected
+
+    except Exception as e:
+        log.error("Maigret failed for '%s': %s", username, e)
+        await emit({
+            "step": "maigret", "status": "error",
+            "seed": username, "error": str(e),
+        })
+        return 0
+
+
+async def _process_email_seed(case_id: int, ident: dict, emit) -> int:
+    email = ident["value"]
+    await emit({"step": "breach", "status": "running", "seed": email, "message": "Checking breach databases..."})
+    try:
+        result = await breach_lookup(email)
+        conn = get_db_conn()
+        try:
+            save_breach_lookup(conn, case_id, result)
+        finally:
+            conn.close()
+        await emit({
+            "step": "breach", "status": "done",
+            "seed": email, "breaches": result.total_breaches,
+            "message": f"Found in {result.total_breaches} breach(es)",
+        })
+    except Exception as e:
+        log.error("Breach lookup failed for '%s': %s", email, e)
+        await emit({"step": "breach", "status": "error", "seed": email, "error": str(e)})
+    return 0
+
+
+async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
+    phone = ident["value"]
+    await emit({"step": "phone", "status": "running", "seed": phone, "message": "Looking up phone number..."})
+    try:
+        collector = PhoneCollector()
+        profile = await collector.collect(phone)
+        result_dict = profile.to_dict()
+
+        conn = get_db_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (case_id, "phone", phone, json.dumps(result_dict)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        await emit({
+            "step": "phone", "status": "done",
+            "seed": phone,
+            "message": "Phone lookup complete",
+        })
+    except Exception as e:
+        log.error("Phone lookup failed for '%s': %s", phone, e)
+        await emit({"step": "phone", "status": "error", "seed": phone, "error": str(e)})
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Analysis phase workers (correlation + insights). Both are blocking/sync
+# under the hood (psycopg2, numpy, sklearn), so each is offloaded to a
+# worker thread via run_in_executor — that's what lets them genuinely run
+# in parallel with each other rather than just interleaving on one thread.
+# ─────────────────────────────────────────────────────────────────────────
+
+async def _process_correlation(case_id: int, emit) -> None:
+    await emit({"step": "correlate", "status": "running", "message": "Running identity correlation..."})
+    try:
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, correlate_case, case_id)
+        await emit({
+            "step": "correlate", "status": "done",
+            "pairs": len(results),
+            "message": f"Correlated {len(results)} pair(s)",
+        })
+    except Exception as e:
+        log.error("Correlation failed for case %d: %s", case_id, e)
+        await emit({"step": "correlate", "status": "error", "error": str(e)})
+
+
+async def _process_insights(case_id: int, emit) -> None:
+    await emit({"step": "insights", "status": "running", "message": "Computing insights..."})
+    try:
+        conn = get_db_conn()
+        try:
+            loop = asyncio.get_event_loop()
+            insight_results = await loop.run_in_executor(None, run_insights, conn, case_id)
+        finally:
+            conn.close()
+        await emit({
+            "step": "insights", "status": "done",
+            "count": len(insight_results),
+            "message": f"Generated {len(insight_results)} insight(s)",
+        })
+    except Exception as e:
+        log.error("Insights failed for case %d: %s", case_id, e)
+        await emit({"step": "insights", "status": "error", "error": str(e)})
+
+
+async def _process_intelligence(case_id: int, emit) -> None:
+    import os
+    has_llm_key = os.environ.get("GROQ_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not has_llm_key:
+        await emit({"step": "intelligence", "status": "skipped", "message": "No LLM API key configured (GROQ_API_KEY or GEMINI_API_KEY)"})
+        return
+
+    await emit({"step": "intelligence", "status": "running", "message": "Generating intelligence briefing..."})
+    try:
+        from llm.analyst import generate_briefing
+        from llm.citation_check import validate_citations, save_report
+
+        loop = asyncio.get_event_loop()
+
+        def _run_briefing():
+            conn = get_db_conn()
+            try:
+                analyst_output = generate_briefing(conn, case_id)
+                checked = validate_citations(conn, case_id, analyst_output)
+                save_report(conn, case_id, checked)
+                return checked
+            finally:
+                conn.close()
+
+        checked = await loop.run_in_executor(None, _run_briefing)
+        await emit({
+            "step": "intelligence", "status": "done",
+            "claims": len(checked["claims"]),
+            "message": f"Intelligence briefing generated ({len(checked['claims'])} cited claims)",
+        })
+    except Exception as e:
+        log.error("Intelligence briefing failed for case %d: %s", case_id, e)
+        await emit({"step": "intelligence", "status": "error", "error": str(e)})
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Producer: drives the whole pipeline, pushing SSE-ready dicts onto a
+# queue. A `None` sentinel signals completion (success or failure).
+# ─────────────────────────────────────────────────────────────────────────
+
+async def _run_producer(case_id: int, user_id: int, queue: "asyncio.Queue[Optional[dict]]") -> None:
+    emit = queue.put  # async callable: emit(dict) -> awaits queue.put(dict)
+
     conn = get_db_conn()
     try:
         _check_case_ownership(conn, case_id, user_id)
@@ -80,233 +319,101 @@ async def _run_investigation(case_id: int, user_id: int) -> AsyncGenerator[str, 
         conn.close()
 
     if not identifiers:
-        yield _sse({"step": "error", "status": "error", "message": "No identifiers found. Add seeds first."})
+        await emit({"step": "error", "status": "error", "message": "No identifiers found. Add seeds first."})
+        await queue.put(None)
         return
 
     usernames = [i for i in identifiers if i["identifier_type"] == "username"]
     emails = [i for i in identifiers if i["identifier_type"] == "email"]
     phones = [i for i in identifiers if i["identifier_type"] == "phone"]
 
-    total_steps = len(usernames) + len(emails) + len(phones) + 2  # +2 for correlate + insights
-    yield _sse({
+    await emit({
         "step": "init",
         "status": "running",
-        "message": f"Starting investigation with {len(identifiers)} seed(s)",
+        "message": f"Starting investigation with {len(identifiers)} seed(s) ({len(usernames) + len(emails) + len(phones)} running in parallel)",
         "total_seeds": len(identifiers),
         "usernames": len(usernames),
         "emails": len(emails),
         "phones": len(phones),
     })
 
+    # ── Phase 1: all seed collectors, concurrently ──────────────────────────
+    collector_tasks = (
+        [_process_username_seed(case_id, ident, emit) for ident in usernames]
+        + [_process_email_seed(case_id, ident, emit) for ident in emails]
+        + [_process_phone_seed(case_id, ident, emit) for ident in phones]
+    )
+
     collected_accounts = 0
+    if collector_tasks:
+        results = await asyncio.gather(*collector_tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                log.error("Case %d: a collector task raised unexpectedly: %s", case_id, r)
+            else:
+                collected_accounts += r
 
-    # ── Phase 1: Username seeds ──────────────────────────────────────────────
-    for ident in usernames:
-        username = ident["value"]
-        platform_hint = ident.get("platform_hint")
+    await emit({
+        "step": "collection_phase", "status": "done",
+        "accounts_collected": collected_accounts,
+        "message": f"Collection complete — {collected_accounts} account(s) gathered",
+    })
 
-        if platform_hint and platform_hint in SUPPORTED_PLATFORMS:
-            # Direct collection from known platform
-            yield _sse({"step": "collect", "status": "running", "platform": platform_hint, "username": username})
-            try:
-                profile = await collect_async(platform_hint, username)
-                conn = get_db_conn()
-                try:
-                    save_to_db(profile, conn, case_id)
-                finally:
-                    conn.close()
-                collected_accounts += 1
-                yield _sse({
-                    "step": "collect", "status": "done",
-                    "platform": platform_hint, "username": username,
-                    "posts": len(profile.posts),
-                    "display_name": profile.display_name,
-                })
-            except Exception as e:
-                log.warning("Collection failed for %s/%s: %s", platform_hint, username, e)
-                yield _sse({
-                    "step": "collect", "status": "error",
-                    "platform": platform_hint, "username": username,
-                    "error": str(e),
-                })
-        else:
-            # No platform hint → run Maigret first, then collect from found platforms
-            yield _sse({"step": "maigret", "status": "running", "seed": username, "message": "Searching 500+ platforms..."})
-            try:
-                maigret_result = await run_maigret(username)
+    # ── Phase 2: correlation + insights, concurrently ───────────────────────
+    analysis_tasks = []
 
-                conn = get_db_conn()
-                try:
-                    save_maigret_search(conn, case_id, maigret_result)
-                finally:
-                    conn.close()
-
-                total_found = maigret_result.get("total_found", 0)
-                lead_summary = maigret_result.get("lead_summary", {})
-                yield _sse({
-                    "step": "maigret", "status": "done",
-                    "seed": username, "found": total_found,
-                    "lead_summary": lead_summary,
-                    "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
-                })
-
-                # Deep-collect from supported platforms
-                collectible = _find_collectible_platforms(maigret_result)
-                for platform in collectible:
-                    yield _sse({"step": "collect", "status": "running", "platform": platform, "username": username})
-                    try:
-                        profile = await collect_async(platform, username)
-                        conn = get_db_conn()
-                        try:
-                            save_to_db(profile, conn, case_id)
-                        finally:
-                            conn.close()
-                        collected_accounts += 1
-                        yield _sse({
-                            "step": "collect", "status": "done",
-                            "platform": platform, "username": username,
-                            "posts": len(profile.posts),
-                            "display_name": profile.display_name,
-                        })
-                    except Exception as e:
-                        log.warning("Collection failed for %s/%s: %s", platform, username, e)
-                        yield _sse({
-                            "step": "collect", "status": "error",
-                            "platform": platform, "username": username,
-                            "error": str(e),
-                        })
-
-            except Exception as e:
-                log.error("Maigret failed for '%s': %s", username, e)
-                yield _sse({
-                    "step": "maigret", "status": "error",
-                    "seed": username, "error": str(e),
-                })
-
-    # ── Phase 2: Email seeds ─────────────────────────────────────────────────
-    for ident in emails:
-        email = ident["value"]
-        yield _sse({"step": "breach", "status": "running", "seed": email, "message": "Checking breach databases..."})
-        try:
-            result = await breach_lookup(email)
-            conn = get_db_conn()
-            try:
-                save_breach_lookup(conn, case_id, result)
-            finally:
-                conn.close()
-            yield _sse({
-                "step": "breach", "status": "done",
-                "seed": email, "breaches": result.total_breaches,
-                "message": f"Found in {result.total_breaches} breach(es)",
-            })
-        except Exception as e:
-            log.error("Breach lookup failed for '%s': %s", email, e)
-            yield _sse({"step": "breach", "status": "error", "seed": email, "error": str(e)})
-
-    # ── Phase 3: Phone seeds ─────────────────────────────────────────────────
-    for ident in phones:
-        phone = ident["value"]
-        yield _sse({"step": "phone", "status": "running", "seed": phone, "message": "Looking up phone number..."})
-        try:
-            collector = PhoneCollector()
-            profile = await collector.collect(phone)
-            result_dict = profile.to_dict()
-
-            conn = get_db_conn()
-            try:
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (case_id, "phone", phone, json.dumps(result_dict)),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-
-            yield _sse({
-                "step": "phone", "status": "done",
-                "seed": phone,
-                "message": "Phone lookup complete",
-            })
-        except Exception as e:
-            log.error("Phone lookup failed for '%s': %s", phone, e)
-            yield _sse({"step": "phone", "status": "error", "seed": phone, "error": str(e)})
-
-    # ── Phase 4: Correlation ─────────────────────────────────────────────────
     if collected_accounts >= 2:
-        yield _sse({"step": "correlate", "status": "running", "message": "Running identity correlation..."})
-        try:
-            results = correlate_case(case_id)
-            yield _sse({
-                "step": "correlate", "status": "done",
-                "pairs": len(results),
-                "message": f"Correlated {len(results)} pair(s)",
-            })
-        except Exception as e:
-            log.error("Correlation failed for case %d: %s", case_id, e)
-            yield _sse({"step": "correlate", "status": "error", "error": str(e)})
+        analysis_tasks.append(_process_correlation(case_id, emit))
     else:
-        yield _sse({
+        await emit({
             "step": "correlate", "status": "skipped",
             "message": f"Need 2+ accounts to correlate (have {collected_accounts})",
         })
 
-    # ── Phase 5: Insights ────────────────────────────────────────────────────
     if collected_accounts >= 1:
-        yield _sse({"step": "insights", "status": "running", "message": "Computing insights..."})
-        try:
-            conn = get_db_conn()
-            try:
-                insight_results = run_insights(conn, case_id)
-            finally:
-                conn.close()
-            yield _sse({
-                "step": "insights", "status": "done",
-                "count": len(insight_results),
-                "message": f"Generated {len(insight_results)} insight(s)",
-            })
-        except Exception as e:
-            log.error("Insights failed for case %d: %s", case_id, e)
-            yield _sse({"step": "insights", "status": "error", "error": str(e)})
+        analysis_tasks.append(_process_insights(case_id, emit))
     else:
-        yield _sse({"step": "insights", "status": "skipped", "message": "No accounts collected"})
+        await emit({"step": "insights", "status": "skipped", "message": "No accounts collected"})
 
-    # ── Phase 6: Intelligence Briefing (LLM) ──────────────────────────────
+    if analysis_tasks:
+        await asyncio.gather(*analysis_tasks, return_exceptions=True)
+
+    # ── Phase 3: intelligence briefing (depends on insights + correlation) ──
     if collected_accounts >= 1:
-        import os
-        has_llm_key = os.environ.get("GROQ_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-        if has_llm_key:
-            yield _sse({"step": "intelligence", "status": "running", "message": "Generating intelligence briefing..."})
-            try:
-                from llm.analyst import generate_briefing
-                from llm.citation_check import validate_citations, save_report
-                conn = get_db_conn()
-                try:
-                    analyst_output = generate_briefing(conn, case_id)
-                    checked = validate_citations(conn, case_id, analyst_output)
-                    save_report(conn, case_id, checked)
-                finally:
-                    conn.close()
-                yield _sse({
-                    "step": "intelligence", "status": "done",
-                    "claims": len(checked["claims"]),
-                    "message": f"Intelligence briefing generated ({len(checked['claims'])} cited claims)",
-                })
-            except Exception as e:
-                log.error("Intelligence briefing failed for case %d: %s", case_id, e)
-                yield _sse({"step": "intelligence", "status": "error", "error": str(e)})
-        else:
-            yield _sse({"step": "intelligence", "status": "skipped", "message": "No LLM API key configured (GROQ_API_KEY or GEMINI_API_KEY)"})
+        await _process_intelligence(case_id, emit)
 
-    # ── Done ─────────────────────────────────────────────────────────────────
-    yield _sse({
+    await emit({
         "step": "complete", "status": "done",
         "message": "Investigation complete",
         "accounts_collected": collected_accounts,
     })
+    await queue.put(None)
+
+
+async def _run_investigation(case_id: int, user_id: int) -> AsyncGenerator[str, None]:
+    """Async generator that drives the pipeline via a producer task and
+    yields SSE events as they're pushed onto the queue, so events from
+    concurrently-running collectors/analysis steps interleave live."""
+    queue: "asyncio.Queue[Optional[dict]]" = asyncio.Queue()
+    producer_task = asyncio.create_task(_run_producer(case_id, user_id, queue))
+
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield _sse(item)
+    finally:
+        if not producer_task.done():
+            producer_task.cancel()
+            try:
+                await producer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        else:
+            exc = producer_task.exception()
+            if exc:
+                log.error("Case %d: investigation producer failed: %s", case_id, exc)
 
 
 @router.post("/{case_id}/run")
@@ -316,7 +423,8 @@ async def run_investigation(
 ):
     """
     Run the full investigation pipeline for a case.
-    Streams progress as Server-Sent Events.
+    Streams progress as Server-Sent Events. Collectors run in parallel;
+    correlation and insights run in parallel with each other afterward.
     """
     conn = get_db_conn()
     try:
