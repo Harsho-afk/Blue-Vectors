@@ -15,8 +15,13 @@ function Navigation() {
 
   return (
     <nav className="aria-nav">
-      <div className="aria-nav__brand">ARIA</div>
+      <div className="aria-nav__left">
+        <a href="/" className="aria-nav__brand">ARIA</a>
+        <span className="aria-nav__divider" />
+        <span className="aria-nav__tagline">SOCMINT IDENTITY RESOLUTION</span>
+      </div>
       <div className="aria-nav__user">
+        <span className="aria-nav__role">INVESTIGATOR</span>
         <span className="aria-nav__email">{user.email}</span>
         <button className="aria-nav__logout" onClick={logout}>
           LOGOUT

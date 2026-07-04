@@ -23,15 +23,27 @@ export default function CaseDashboard() {
   if (loading) {
     return (
       <div className="aria-main">
-        <div className="aria-loading">Loading cases...</div>
+        <div className="aria-loading">Initializing dashboard...</div>
       </div>
     );
   }
 
+  const openCount = cases.filter(c => c.status === "open").length;
+  const closedCount = cases.filter(c => c.status === "closed").length;
+
   return (
     <div className="aria-main">
       <div className="dash-header">
-        <h1 className="dash-header__title">INVESTIGATIONS</h1>
+        <div>
+          <h1 className="dash-header__title">Investigations</h1>
+          {cases.length > 0 && (
+            <div className="dash-header__stats">
+              <span className="dash-stat dash-stat--open">{openCount} active</span>
+              <span className="dash-stat__sep">/</span>
+              <span className="dash-stat">{closedCount} closed</span>
+            </div>
+          )}
+        </div>
         <button className="dash-header__new" onClick={() => navigate("/cases/new")}>
           + NEW CASE
         </button>
@@ -41,15 +53,18 @@ export default function CaseDashboard() {
 
       {cases.length === 0 && !error ? (
         <div className="empty-state">
-          <p className="empty-state__title">NO CASES YET</p>
-          <p className="empty-state__sub">create your first investigation</p>
+          <div className="empty-state__icon">
+            <span className="empty-state__crosshair" />
+          </div>
+          <p className="empty-state__title">No active investigations</p>
+          <p className="empty-state__sub">Create a case, add seed identifiers, and start collecting</p>
         </div>
       ) : (
         <div className="case-list">
           {cases.map(c => (
             <div
               key={c.id}
-              className="case-row"
+              className={`case-row case-row--${c.status}`}
               onClick={() => navigate(`/cases/${c.id}`)}
             >
               <div className="case-row__top">

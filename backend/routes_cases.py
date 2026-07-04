@@ -261,12 +261,12 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
         # Accounts + their posts
         if DB_TYPE == "sqlite":
             cur.execute(
-                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url FROM accounts WHERE case_id = ?",
+                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count FROM accounts WHERE case_id = ?",
                 (case_id,),
             )
         else:
             cur.execute(
-                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url FROM accounts WHERE case_id = %s",
+                "SELECT id, case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count FROM accounts WHERE case_id = %s",
                 (case_id,),
             )
         accounts = [dict(row) for row in cur.fetchall()]
@@ -331,6 +331,9 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
                 "location": a["location"],
                 "created_at": str(a["created_at"]) if a["created_at"] else None,
                 "profile_image_url": a["profile_image_url"],
+                "karma": a["karma"],
+                "follower_count": a["follower_count"],
+                "following_count": a["following_count"],
                 "posts": [
                     {
                         "id": p["id"],
@@ -444,41 +447,47 @@ async def collect_for_case(
         if DB_TYPE == "sqlite":
             cur.execute(
                 """
-                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (case_id, platform, username) DO UPDATE SET
                     display_name      = excluded.display_name,
                     bio               = excluded.bio,
                     location          = excluded.location,
-                    profile_image_url = excluded.profile_image_url
+                    created_at        = excluded.created_at,
+                    profile_image_url = excluded.profile_image_url,
+                    karma             = excluded.karma,
+                    follower_count    = excluded.follower_count,
+                    following_count   = excluded.following_count
                 """,
                 (case_id, profile.platform, profile.username, profile.display_name,
-                 profile.bio, profile.location, created_at_dt, profile.profile_image_url),
+                 profile.bio, profile.location, created_at_dt, profile.profile_image_url,
+                 profile.karma, profile.follower_count, profile.following_count),
             )
             conn.commit()
-            cur.execute("SELECT last_insert_rowid()")
-            row = cur.fetchone()
-            account_id = row[0] if row else None
-            if account_id == 0:
-                cur.execute(
-                    "SELECT id FROM accounts WHERE case_id = ? AND platform = ? AND username = ?",
-                    (case_id, profile.platform, profile.username),
-                )
-                account_id = cur.fetchone()[0]
+            cur.execute(
+                "SELECT id FROM accounts WHERE case_id = ? AND platform = ? AND username = ?",
+                (case_id, profile.platform, profile.username),
+            )
+            account_id = cur.fetchone()[0]
         else:
             cur.execute(
                 """
-                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO accounts (case_id, platform, username, display_name, bio, location, created_at, profile_image_url, karma, follower_count, following_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (case_id, platform, username) DO UPDATE SET
                     display_name      = EXCLUDED.display_name,
                     bio               = EXCLUDED.bio,
                     location          = EXCLUDED.location,
-                    profile_image_url = EXCLUDED.profile_image_url
+                    created_at        = EXCLUDED.created_at,
+                    profile_image_url = EXCLUDED.profile_image_url,
+                    karma             = EXCLUDED.karma,
+                    follower_count    = EXCLUDED.follower_count,
+                    following_count   = EXCLUDED.following_count
                 RETURNING id
                 """,
                 (case_id, profile.platform, profile.username, profile.display_name,
-                 profile.bio, profile.location, created_at_dt, profile.profile_image_url),
+                 profile.bio, profile.location, created_at_dt, profile.profile_image_url,
+                 profile.karma, profile.follower_count, profile.following_count),
             )
             account_id = cur.fetchone()[0]
 

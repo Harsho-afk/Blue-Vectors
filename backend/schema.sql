@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     location          TEXT,
     created_at        TIMESTAMPTZ,
     profile_image_url TEXT,
+    karma             INTEGER,
+    follower_count    INTEGER,
+    following_count   INTEGER,
     UNIQUE (case_id, platform, username)
 );
 

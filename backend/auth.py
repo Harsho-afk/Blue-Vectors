@@ -84,6 +84,9 @@ def _init_db():
             location TEXT,
             created_at TIMESTAMP,
             profile_image_url TEXT,
+            karma INTEGER,
+            follower_count INTEGER,
+            following_count INTEGER,
             UNIQUE (case_id, platform, username)
         )
     """)
@@ -195,6 +198,7 @@ def get_db_conn():
     if DB_TYPE == "sqlite":
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
     else:
         # PostgreSQL fallback (for production)

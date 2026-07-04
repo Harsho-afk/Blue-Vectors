@@ -2,15 +2,29 @@ import PlatformBadge from "./PlatformBadge";
 import StatPill from "./StatPill";
 import { C } from "../styles/tokens";
 
+const AVATAR_PALETTES = [
+  ["#FF6B6B", "#C44569"], ["#4ECDC4", "#2C7873"], ["#45B7D1", "#2980B9"],
+  ["#96E6A1", "#38A169"], ["#DDA0DD", "#8E44AD"], ["#F7DC6F", "#D4AC0D"],
+  ["#E8927C", "#C0392B"], ["#7EC8E3", "#2471A3"], ["#A29BFE", "#6C5CE7"],
+  ["#FFEAA7", "#FDCB6E"], ["#FD79A8", "#E84393"], ["#55E6C1", "#1ABC9C"],
+];
+
+function usernameHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 export default function ProfileCard({ profile }) {
   const created = profile.created_utc
     ? new Date(profile.created_utc * 1000).toISOString().slice(0, 10)
     : null;
 
   const handle = (profile.platform === "twitter" ? "@" : "u/") + profile.username;
+  const palette = AVATAR_PALETTES[usernameHash(profile.username) % AVATAR_PALETTES.length];
 
   return (
-    <div className="profile-card">
+    <div className={`profile-card profile-card--${profile.platform}`}>
       <div className="profile-card__header">
         {profile.profile_image_url ? (
           <img
@@ -19,7 +33,10 @@ export default function ProfileCard({ profile }) {
             className="profile-card__avatar"
           />
         ) : (
-          <div className="profile-card__avatar-fallback">
+          <div
+            className="profile-card__avatar-fallback"
+            style={{ background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})` }}
+          >
             {(profile.display_name || profile.username || "?")[0].toUpperCase()}
           </div>
         )}

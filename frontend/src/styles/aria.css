@@ -109,8 +109,8 @@ body {
 /* ── Cards / Panels ─────────────────────── */
 .aria-card {
   background: #111318;
-  border: 1px solid #2A3040;
-  border-radius: 6px;
+  border: 1px solid #1E2229;
+  border-radius: 4px;
   padding: 20px;
 }
 
@@ -293,10 +293,14 @@ body {
 .profile-card {
   background: #111318;
   border: 1px solid #2A3040;
-  border-radius: 6px;
+  border-left: 3px solid #4A5568;
+  border-radius: 4px;
   padding: 20px 20px 16px;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
+
+.profile-card--reddit  { border-left-color: #FF4500; }
+.profile-card--twitter { border-left-color: #1D9BF0; }
 
 .profile-card__header {
   display: flex;
@@ -319,14 +323,16 @@ body {
   height: 52px;
   border-radius: 50%;
   background: #161A22;
-  border: 2px solid #2A3040;
+  border: 2px solid rgba(255, 255, 255, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  font-size: 18px;
-  color: #4FFFB0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .profile-card__meta { flex: 1; min-width: 0; }
@@ -634,23 +640,63 @@ body {
 /* ── Empty states ────────────────────────── */
 .empty-state {
   text-align: center;
-  padding: 60px 0;
-  border-top: 1px solid #1E2229;
+  padding: 80px 0 60px;
+}
+
+.empty-state__icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 20px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state__crosshair {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid #2A3040;
+  border-radius: 50%;
+  position: relative;
+}
+
+.empty-state__crosshair::before,
+.empty-state__crosshair::after {
+  content: '';
+  position: absolute;
+  background: #2A3040;
+}
+
+.empty-state__crosshair::before {
+  width: 1px;
+  height: 36px;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.empty-state__crosshair::after {
+  width: 36px;
+  height: 1px;
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .empty-state__title {
-  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  font-size: 11px;
-  color: #4A5568;
-  letter-spacing: 2px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6B7280;
 }
 
 .empty-state__sub {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: #4A5568;
-  opacity: 0.5;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .no-records {
@@ -666,7 +712,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 24px;
+  padding: 0 24px;
+  height: 48px;
   background: #111318;
   border-bottom: 1px solid #1E2229;
   position: sticky;
@@ -674,11 +721,32 @@ body {
   z-index: 10;
 }
 
+.aria-nav__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .aria-nav__brand {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 3px;
   color: #4FFFB0;
+  text-decoration: none;
+}
+
+.aria-nav__divider {
+  width: 1px;
+  height: 16px;
+  background: #2A3040;
+}
+
+.aria-nav__tagline {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #4A5568;
 }
 
 .aria-nav__user {
@@ -687,27 +755,38 @@ body {
   gap: 12px;
 }
 
+.aria-nav__role {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #4FFFB0;
+  background: #4FFFB00F;
+  border: 1px solid #4FFFB025;
+  padding: 2px 8px;
+  border-radius: 2px;
+}
+
 .aria-nav__email {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
   font-size: 11px;
-  color: #E2E8F0;
+  color: #6B7280;
 }
 
 .aria-nav__logout {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
   font-size: 10px;
-  padding: 6px 12px;
-  background: #FF450012;
-  color: #FF4500;
-  border: 1px solid #FF450030;
+  padding: 5px 12px;
+  background: transparent;
+  color: #4A5568;
+  border: 1px solid #2A3040;
   border-radius: 3px;
   cursor: pointer;
   letter-spacing: 0.5px;
-  transition: background 0.15s, border-color 0.15s;
+  transition: color 0.15s, border-color 0.15s;
 }
 
 .aria-nav__logout:hover {
-  background: #FF450020;
+  color: #FF4500;
   border-color: #FF4500;
 }
 
@@ -865,17 +944,38 @@ body {
 /* ── Case Dashboard ─────────────────────── */
 .dash-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 28px;
 }
 
 .dash-header__title {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: 2px;
-  color: #4FFFB0;
+  letter-spacing: 1px;
+  color: #E2E8F0;
+}
+
+.dash-header__stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dash-stat {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #4A5568;
+}
+
+.dash-stat--open { color: #4FFFB0; }
+
+.dash-stat__sep {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 11px;
+  color: #2A3040;
 }
 
 .dash-header__new {
@@ -883,13 +983,14 @@ body {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 1px;
-  padding: 10px 18px;
+  padding: 10px 20px;
   background: #4FFFB0;
   color: #0A0B0D;
   border: none;
   border-radius: 3px;
   cursor: pointer;
   transition: background 0.15s;
+  margin-top: 4px;
 }
 
 .dash-header__new:hover { background: #5FFFC0; }
@@ -898,22 +999,28 @@ body {
 .case-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .case-row {
   background: #111318;
   border: 1px solid #2A3040;
-  border-radius: 6px;
+  border-left: 3px solid #2A3040;
+  border-radius: 4px;
   padding: 16px 20px;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s, border-left-color 0.15s;
 }
 
+.case-row--open  { border-left-color: #4FFFB0; }
+.case-row--closed { border-left-color: #4A5568; }
+
 .case-row:hover {
-  border-color: #4FFFB0;
-  background: #4FFFB008;
+  background: #161A22;
+  border-color: #4A5568;
 }
+
+.case-row--open:hover { border-left-color: #4FFFB0; }
 
 .case-row__top {
   display: flex;
@@ -942,7 +1049,7 @@ body {
 .case-row__status--open {
   color: #4FFFB0;
   border-color: #4FFFB033;
-  background: #4FFFB012;
+  background: #4FFFB00A;
 }
 
 .case-row__status--closed {
@@ -1026,6 +1133,7 @@ body {
 
 /* ── Case Detail ────────────────────────── */
 .back-link {
+  display: inline-block;
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
   font-size: 11px;
   color: #4A5568;
@@ -1033,7 +1141,7 @@ body {
   border: none;
   cursor: pointer;
   padding: 0;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   letter-spacing: 0.5px;
   transition: color 0.15s;
 }
@@ -1041,22 +1149,24 @@ body {
 .back-link:hover { color: #4FFFB0; }
 
 .case-header {
-  margin-bottom: 24px;
+  margin-bottom: 28px;
+  padding-left: 16px;
+  border-left: 3px solid #4FFFB0;
 }
 
 .case-header__top {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .case-header__title {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
   font-size: 20px;
   font-weight: 700;
-  color: #4FFFB0;
-  letter-spacing: 1px;
+  color: #E2E8F0;
+  letter-spacing: 0.5px;
 }
 
 .case-header__meta {
@@ -1066,6 +1176,18 @@ body {
   font-size: 10px;
   color: #4A5568;
   letter-spacing: 0.5px;
+}
+
+/* ── Collect button pulse animation ─────── */
+.collect-btn--collecting {
+  background: #1A6644;
+  cursor: wait;
+  animation: collect-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes collect-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
 
 /* ── Identifier list (detail view) ──────── */
@@ -1080,10 +1202,14 @@ body {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  background: #161A22;
-  border: 1px solid #2A3040;
-  border-radius: 4px;
+  background: #0E1015;
+  border: 1px solid #1E2229;
+  border-left: 2px solid #2A3040;
+  border-radius: 3px;
+  transition: border-left-color 0.15s;
 }
+
+.id-list__row:hover { border-left-color: #4A5568; }
 
 .id-list__type {
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
@@ -1145,7 +1271,13 @@ body {
 
 /* ── Account section spacing ────────────── */
 .account-section {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
+}
+
+.account-section .aria-card {
+  border-left: none;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
 }
 
 /* ── Show more / less button ────────────── */

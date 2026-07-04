@@ -288,6 +288,9 @@ export default function CaseDetail() {
                     location: acc.location || "",
                     profile_image_url: acc.profile_image_url || "",
                     created_utc: acc.created_at ? new Date(acc.created_at).getTime() / 1000 : null,
+                    karma: acc.karma,
+                    follower_count: acc.follower_count,
+                    following_count: acc.following_count,
                     posts: posts,
                     subreddits: [...new Set(
                       posts
