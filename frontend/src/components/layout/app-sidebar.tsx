@@ -1,5 +1,5 @@
-import { useLayout } from '@/context/layout-provider'
 import { useAuth } from '@/context/auth-context'
+import { useLayout } from '@/context/layout-provider'
 import {
   Sidebar,
   SidebarContent,
@@ -23,16 +23,20 @@ export function AppSidebar() {
   }
 
   return (
-    <Sidebar collapsible={collapsible} variant={variant}>
-      <SidebarHeader>
+    <Sidebar
+      collapsible={collapsible}
+      variant={variant}
+      className='border-r border-orange-100 bg-white dark:border-white/10 dark:bg-slate-950'
+    >
+      <SidebarHeader className='border-b border-orange-100 p-4 dark:border-white/10'>
         <AppTitle />
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className='bg-white px-2 py-4 dark:bg-slate-950'>
         {sidebarData.navGroups.map((props) => (
           <NavGroup key={props.title} {...props} />
         ))}
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className='border-t border-orange-100 bg-white p-3 dark:border-white/10 dark:bg-slate-950'>
         <NavUser user={sidebarUser} />
       </SidebarFooter>
       <SidebarRail />

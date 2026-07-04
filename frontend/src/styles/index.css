@@ -15,6 +15,20 @@
   }
   body {
     @apply min-h-svh w-full bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar;
+    background:
+      radial-gradient(
+        circle at 12% 8%,
+        rgba(251, 146, 60, 0.18),
+        transparent 24rem
+      ),
+      radial-gradient(
+        circle at 92% 14%,
+        rgba(253, 186, 116, 0.16),
+        transparent 24rem
+      ),
+      var(--background);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* Override Radix scroll locking for sticky headers */
@@ -35,6 +49,64 @@
     textarea {
       font-size: 16px !important;
     }
+  }
+}
+
+@layer components {
+  .command-grid {
+    background-image:
+      linear-gradient(rgba(45, 212, 191, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(245, 158, 11, 0.035) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  [data-sidebar='sidebar'] {
+    background: var(--sidebar);
+  }
+
+  [data-sidebar='group-label'] {
+    color: rgb(148 163 184);
+    font-family: var(--font-mono, monospace);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  [data-sidebar='menu-button'] {
+    min-height: 42px;
+    color: rgb(71 85 105);
+    font-weight: 600;
+  }
+
+  [data-sidebar='menu-button'] svg {
+    color: rgb(100 116 139);
+  }
+
+  [data-sidebar='menu-button'][data-active='true'] {
+    border: 1px solid rgba(251, 146, 60, 0.35);
+    background: rgba(255, 237, 213, 0.8);
+    color: rgb(194 65 12);
+  }
+
+  [data-sidebar='menu-button'][data-active='true'] svg {
+    color: rgb(234 88 12);
+  }
+
+  .dark [data-sidebar='menu-button'] {
+    color: rgb(148 163 184);
+  }
+
+  .dark [data-sidebar='menu-button'] svg {
+    color: rgb(148 163 184);
+  }
+
+  .dark [data-sidebar='menu-button'][data-active='true'] {
+    border-color: rgba(251, 146, 60, 0.35);
+    background: rgba(251, 146, 60, 0.12);
+    color: rgb(253 186 116);
+  }
+
+  .dark [data-sidebar='menu-button'][data-active='true'] svg {
+    color: rgb(251 146 60);
   }
 }
 

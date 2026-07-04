@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { Menu, X } from 'lucide-react'
+import { Menu, Sparkles, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   SidebarMenu,
@@ -23,15 +23,27 @@ export function AppTitle() {
             <Link
               to='/'
               onClick={() => setOpenMobile(false)}
-              className='grid flex-1 text-start text-sm leading-tight'
+              className='flex flex-1 items-center gap-3 text-start text-sm leading-tight'
             >
-              <span className='truncate font-bold'>ARIA</span>
-              <span className='truncate text-xs'>SOCMINT Investigation Platform</span>
+              <span className='flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300'>
+                <Sparkles className='size-6' />
+              </span>
+              <span className='grid min-w-0'>
+                <span className='truncate font-bold tracking-wide text-slate-950 uppercase dark:text-white'>
+                  ARIA
+                </span>
+                <span className='truncate font-mono text-[0.65rem] tracking-[0.22em] text-orange-500 uppercase dark:text-orange-300'>
+                  Intelligence Workspace
+                </span>
+              </span>
             </Link>
             <ToggleSidebar />
           </div>
         </SidebarMenuButton>
       </SidebarMenuItem>
+      <p className='px-2 pt-3 text-xs leading-relaxed text-slate-500 group-data-[collapsible=icon]:hidden dark:text-slate-400'>
+        Adaptive risk intelligence for investigations, cases, and evidence.
+      </p>
     </SidebarMenu>
   )
 }

@@ -1,11 +1,14 @@
 import { useState } from 'react'
+
 import {
-  AlertCircle,
   CheckCircle2,
   ChevronDown,
   Loader2,
   Zap,
+  AlertCircle,
 } from 'lucide-react'
+
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,6 +27,7 @@ import {
 import { cn } from '@/lib/utils'
 
 interface ShapData {
+
   confidence_pct?: number
   band?: string
   evidence_type?: string
