@@ -8,3 +8,4 @@ uvicorn[standard]>=0.29
 bcrypt
 python-jose[cryptography]>=3.3
 email-validator>=2.0
+sherlock-project

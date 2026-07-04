@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from collector import collect_async
 from routes_auth import router as auth_router
 from routes_cases import router as cases_router
+from routes_osint import router as osint_router
 from auth import get_current_user
 
 app = FastAPI(title="ARIA API")
@@ -23,6 +24,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(cases_router)
+app.include_router(osint_router)
 
 # ── Existing routes ───────────────────────────────────────────────────────────
 @app.get("/collect/{platform}/{username}")

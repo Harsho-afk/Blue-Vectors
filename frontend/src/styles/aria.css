@@ -1301,3 +1301,207 @@ body {
   background: #4FFFB012;
   border-color: #4FFFB0;
 }
+
+/* ── OSINT buttons ─────────────────────── */
+.osint-btn {
+  height: 28px;
+  padding: 0 12px;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  background: #5B8DEF15;
+  color: #5B8DEF;
+  border: 1px solid #5B8DEF33;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.osint-btn:hover:not(:disabled) {
+  background: #5B8DEF25;
+  border-color: #5B8DEF;
+}
+
+.osint-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.osint-btn--hibp {
+  background: #F6C90E15;
+  color: #F6C90E;
+  border-color: #F6C90E33;
+}
+
+.osint-btn--hibp:hover:not(:disabled) {
+  background: #F6C90E25;
+  border-color: #F6C90E;
+}
+
+.osint-btn--running {
+  animation: collect-pulse 1.5s ease-in-out infinite;
+}
+
+/* ── OSINT Results ─────────────────────── */
+.osint-result {
+  margin-bottom: 16px;
+}
+
+.osint-result:last-child {
+  margin-bottom: 0;
+}
+
+.osint-result__section {
+  padding: 14px;
+  background: #0E1015;
+  border: 1px solid #1E2229;
+  border-radius: 4px;
+}
+
+.osint-result__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.osint-result__badge {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  border: 1px solid;
+}
+
+.osint-result__badge--sherlock {
+  color: #5B8DEF;
+  border-color: #5B8DEF33;
+  background: #5B8DEF12;
+}
+
+.osint-result__badge--hibp {
+  color: #F6C90E;
+  border-color: #F6C90E33;
+  background: #F6C90E12;
+}
+
+.osint-result__input {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  color: #E2E8F0;
+}
+
+.osint-result__count {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4FFFB0;
+}
+
+.osint-result__date {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  margin-left: auto;
+}
+
+.osint-result__errors {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #6B7280;
+  margin-top: 8px;
+}
+
+.osint-result__note {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #F6C90E;
+  margin-bottom: 8px;
+  opacity: 0.8;
+}
+
+/* ── Platform tags (Sherlock results) ──── */
+.osint-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.osint-platform-tag {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #5B8DEF;
+  background: #5B8DEF10;
+  border: 1px solid #5B8DEF25;
+  border-radius: 3px;
+  padding: 3px 8px;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.osint-platform-tag:hover {
+  background: #5B8DEF20;
+  border-color: #5B8DEF;
+  color: #E2E8F0;
+}
+
+/* ── Breach cards (HIBP results) ───────── */
+.osint-breaches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.breach-card {
+  padding: 10px 12px;
+  background: #111318;
+  border: 1px solid #1E2229;
+  border-left: 2px solid #FF4500;
+  border-radius: 3px;
+}
+
+.breach-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.breach-card__name {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #E2E8F0;
+}
+
+.breach-card__domain {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #6B7280;
+}
+
+.breach-card__date {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 10px;
+  color: #4A5568;
+  margin-left: auto;
+}
+
+.breach-card__data {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.breach-card__tag {
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 9px;
+  color: #FF4500;
+  background: #FF450010;
+  border: 1px solid #FF450025;
+  border-radius: 2px;
+  padding: 2px 6px;
+}

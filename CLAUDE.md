@@ -12,6 +12,10 @@ The system must assist investigators in identifying relationships between online
 
 ---
 
+# Commit Rules
+
+Do not add any `Co-Authored-By` trailer to commit messages.
+
 # Claude's Role
 
 You are expected to function as:
