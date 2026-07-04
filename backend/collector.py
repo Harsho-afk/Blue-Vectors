@@ -1,8 +1,13 @@
 """
 ARIA — Layer 1: Data Collection
 
-Reddit  : Redlib (public frontend scraping — no credentials needed)
-Twitter : twikit (browser cookies — ct0 + auth_token from DevTools)
+Reddit collection priority:
+  1. Reddit JSON API  (/user/<u>/about.json, submitted.json, comments.json)
+  2. Self-hosted Redlib  (http://aria-redlib:8080)
+  3. Public Redlib instances
+  4. old.reddit.com
+
+Twitter: twikit (browser cookies — ct0 + auth_token from DevTools)
 
 .env file:
     TWITTER_CT0=...
@@ -20,7 +25,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 from dataclasses import dataclass, field, asdict
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 
 import httpx
 from bs4 import BeautifulSoup
@@ -48,8 +53,6 @@ _tx_mod.ON_DEMAND_FILE_REGEX = _re.compile(
     r',(\d+):["\']ondemand\.s["\']', flags=(_re.VERBOSE | _re.MULTILINE)
 )
 _tx_mod.ON_DEMAND_HASH_PATTERN = r',{}:"([0-9a-f]+)"'
-# Ensure INDICES_REGEX is present — twikit 2.3+ may not define it at module level.
-# Pattern: '"label",byteIndex' — group(2) is the byte index value.
 if not hasattr(_tx_mod, "INDICES_REGEX"):
     _tx_mod.INDICES_REGEX = _re.compile(r'"(\d+)",(\d+)')
 
@@ -89,13 +92,10 @@ _original_user_init = _TwikitUser.__init__
 
 
 def _patched_user_init(self, client, data):
-    # Ensure the entities/description/urls path always exists
     legacy = data.get("legacy", data)
     entities = legacy.setdefault("entities", {})
     description = entities.setdefault("description", {})
     description.setdefault("urls", [])
-    # Twitter's API omits these fields for some accounts; twikit does a hard
-    # dict lookup and crashes with KeyError if they're absent.
     legacy.setdefault("withheld_in_countries", [])
     legacy.setdefault("withheld_scope", None)
     _original_user_init(self, client, data)
@@ -143,27 +143,59 @@ class AccountProfile:
 
 
 def _twitter_ts_to_epoch(ts_str: str) -> float:
-    """
-    Convert a Twitter timestamp string to a UTC Unix epoch float.
-    Twitter format: 'Thu Apr 06 15:28:43 +0000 2017'
-    """
     dt = datetime.strptime(ts_str, "%a %b %d %H:%M:%S %z %Y")
     return dt.timestamp()
 
 
-# ──────────────────────────────────────────────
-# Reddit collector  (Redlib — no credentials)
-# ──────────────────────────────────────────────
-
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 _IMAGE_HOSTS = ("i.redd.it", "preview.redd.it", "i.imgur.com", "imgur.com")
 
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+JSON_HEADERS = {
+    "User-Agent": "ARIA-OSINT/1.0 (by /u/aria_osint)",
+    "Accept": "application/json",
+}
+
+# Self-hosted Redlib (Docker service name)
+_SELF_HOSTED_REDLIB = os.environ.get("REDLIB_URL", "http://aria-redlib:8080")
+
+_PUBLIC_REDLIB_INSTANCES = [
+    "https://redlib.privacyredirect.com",
+    "https://redlib.lunar.icu",
+    "https://redlib.catsarch.com",
+    "https://redlib.perennialte.ch",
+    "https://rl.bloat.cat",
+    "https://redlib.seasi.dev",
+    "https://safereddit.com",
+    "https://redlib.freedit.eu",
+    "https://redlib.tux.pizza",
+    "https://redlib.nadeko.net",
+    "https://redlib.r4fo.com",
+    "https://redlib.private.coffee",
+    "https://redlib.ducks.party",
+]
+
+
+def _is_bot_challenge(text: str) -> bool:
+    low = text[:2000].lower()
+    return (
+        "just a moment" in low
+        or "enable cookies" in low
+        or "checking your browser" in low
+        or "not a bot" in low
+    )
+
 
 def _extract_image_urls(md_el) -> list:
-    """
-    Extract image URLs from an old.reddit.com .md element.
-    Also removes the image link tags from the DOM so get_text() stays clean.
-    """
+    """Extract and remove image links from a BeautifulSoup .md element."""
     if not md_el:
         return []
     urls = []
@@ -187,7 +219,6 @@ def _extract_image_urls(md_el) -> list:
 
 
 def _get_thumbnail(thing_el) -> str:
-    """Extract thumbnail URL from an old.reddit.com .thing element."""
     img = thing_el.select_one("a.thumbnail img")
     if not img:
         return ""
@@ -197,171 +228,655 @@ def _get_thumbnail(thing_el) -> str:
     return src
 
 
-_REDLIB_INSTANCES = [
-    "https://redlib.privacyredirect.com",
-    "https://redlib.lunar.icu",
-    "https://redlib.catsarch.com",
-    "https://redlib.perennialte.ch",
-    "https://rl.bloat.cat",
-    "https://redlib.seasi.dev",
-    "https://safereddit.com",
-    "https://redlib.freedit.eu",
-    "https://redlib.tux.pizza",
-    "https://redlib.nadeko.net",
-    "https://redlib.r4fo.com",
-    "https://redlib.private.coffee",
-    "https://redlib.ducks.party",
-]
-
-_REDLIB_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    ),
-}
+# ──────────────────────────────────────────────
+# SOURCE 1: Reddit JSON API
+# ──────────────────────────────────────────────
 
 
-def _fetch_reddit_avatar(username: str) -> str:
+class RedditJSONCollector:
     """
-    Fetch Reddit profile image. Tries three strategies in order:
-    1. Reddit OAuth API (if REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are set)
-    2. Redlib instances (scrape the avatar from any that respond)
-    3. Give up — return empty string (frontend shows letter fallback)
+    Collects Reddit data via the public JSON API.
+    No credentials required for public profiles.
+    Endpoint pattern: https://www.reddit.com/user/<username>/<type>.json
     """
-    # ── Strategy 1: Reddit OAuth ──
-    client_id = os.environ.get("REDDIT_CLIENT_ID", "")
-    client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
-    if client_id and client_secret:
-        try:
-            token_r = httpx.post(
-                "https://www.reddit.com/api/v1/access_token",
-                auth=(client_id, client_secret),
-                data={"grant_type": "client_credentials"},
-                headers={"User-Agent": "ARIA-OSINT/1.0"},
-                timeout=10,
+
+    BASE = "https://www.reddit.com"
+    TIMEOUT = 12
+
+    def _get(self, path: str, params: dict = None) -> dict:
+        url = f"{self.BASE}{path}"
+        if params:
+            url += "?" + urlencode(params)
+        r = httpx.get(url, headers=JSON_HEADERS, timeout=self.TIMEOUT, follow_redirects=True)
+        if r.status_code == 404:
+            raise ValueError(f"Reddit JSON API: user not found at {path}")
+        if r.status_code == 403:
+            raise ValueError(f"Reddit JSON API: forbidden (private/suspended) at {path}")
+        if r.status_code == 429:
+            raise ValueError("Reddit JSON API: rate limited")
+        if r.status_code != 200:
+            raise ValueError(f"Reddit JSON API: HTTP {r.status_code} at {path}")
+        return r.json()
+
+    def _fetch_about(self, username: str) -> dict:
+        data = self._get(f"/user/{username}/about.json")
+        if data.get("kind") != "t2":
+            raise ValueError(f"Reddit JSON API: unexpected about.json shape for u/{username}")
+        return data["data"]
+
+    def _fetch_listings(self, username: str, endpoint: str, limit: int) -> list:
+        """
+        Paginate through /user/<u>/<endpoint>.json and return raw 'children' dicts.
+        endpoint: 'submitted' | 'comments'
+        """
+        items = []
+        after = None
+        page_size = min(100, limit)
+
+        while len(items) < limit:
+            params = {"limit": page_size, "raw_json": 1}
+            if after:
+                params["after"] = after
+
+            try:
+                data = self._get(f"/user/{username}/{endpoint}.json", params)
+            except ValueError:
+                break
+
+            listing = data.get("data", {})
+            children = listing.get("children", [])
+            if not children:
+                break
+
+            items.extend(children)
+
+            after = listing.get("after")
+            if not after:
+                break
+
+        return items[:limit]
+
+    def collect(self, username: str, limit: int = 100) -> AccountProfile:
+        log.info("Reddit [1/4 JSON API]: collecting u/%s (limit=%d)", username, limit)
+
+        about = self._fetch_about(username)
+
+        display_name = about.get("name", username)
+        bio = about.get("subreddit", {}).get("public_description", "") or ""
+        karma = (about.get("link_karma") or 0) + (about.get("comment_karma") or 0)
+        created_utc = about.get("created_utc")
+
+        # Avatar: prefer snoovatar, fall back to icon_img
+        avatar = about.get("snoovatar_img") or about.get("icon_img") or ""
+        if avatar and "?" in avatar:
+            avatar = avatar.split("?")[0]
+
+        # Collect submissions
+        sub_children = self._fetch_listings(username, "submitted", limit)
+        sub_posts, subreddits = self._parse_submission_children(sub_children)
+        log.info(
+            "Reddit [JSON API]: u/%s — %d submissions fetched", username, len(sub_posts)
+        )
+
+        # Collect comments
+        com_children = self._fetch_listings(username, "comments", limit)
+        com_posts, com_subs = self._parse_comment_children(com_children)
+        subreddits |= com_subs
+        log.info(
+            "Reddit [JSON API]: u/%s — %d comments fetched", username, len(com_posts)
+        )
+
+        all_posts = sub_posts + com_posts
+        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
+
+        log.info(
+            "Reddit [JSON API] ✓: u/%s — %d total posts, %d subreddits (source: reddit.com JSON)",
+            username,
+            len(all_posts),
+            len(subreddits),
+        )
+
+        return AccountProfile(
+            platform="reddit",
+            username=username,
+            display_name=display_name,
+            bio=bio,
+            location="",
+            profile_image_url=avatar,
+            created_utc=created_utc,
+            posts=all_posts,
+            subreddits=sorted(s for s in subreddits if s),
+            karma=karma,
+        )
+
+    def _parse_submission_children(self, children: list) -> tuple:
+        posts = []
+        subreddits = set()
+        for child in children:
+            if child.get("kind") != "t3":
+                continue
+            d = child["data"]
+            sub = d.get("subreddit", "")
+            if sub and not sub.startswith("u_"):
+                subreddits.add(sub)
+            else:
+                sub = ""
+
+            title = d.get("title", "")
+            selftext = d.get("selftext", "")
+            text = title
+            if selftext and selftext not in ("[removed]", "[deleted]"):
+                text = (title + " " + selftext).strip()
+
+            # Image extraction
+            images = []
+            url = d.get("url", "")
+            if url and any(
+                url.split("?")[0].lower().endswith(ext) for ext in _IMAGE_EXTENSIONS
+            ):
+                images.append(url)
+            preview = d.get("preview", {})
+            for img in preview.get("images", []):
+                src = img.get("source", {}).get("url", "").replace("&amp;", "&")
+                if src:
+                    images.append(src)
+            thumbnail = d.get("thumbnail", "")
+            if thumbnail and thumbnail.startswith("http"):
+                images.append(thumbnail)
+            # deduplicate while preserving order
+            seen = set()
+            deduped = []
+            for img in images:
+                if img not in seen:
+                    seen.add(img)
+                    deduped.append(img)
+
+            permalink = d.get("permalink", "")
+            post_url = ("https://reddit.com" + permalink) if permalink else ""
+
+            posts.append(
+                Post(
+                    text=text,
+                    timestamp=float(d.get("created_utc", 0)),
+                    metadata={
+                        "type": "submission",
+                        "subreddit": sub,
+                        "score": d.get("score", 0),
+                        "url": post_url,
+                        "images": deduped,
+                    },
+                )
             )
-            if token_r.status_code == 200:
-                access_token = token_r.json().get("access_token", "")
-                if access_token:
-                    api_r = httpx.get(
-                        f"https://oauth.reddit.com/user/{username}/about",
-                        headers={
-                            "Authorization": f"Bearer {access_token}",
-                            "User-Agent": "ARIA-OSINT/1.0",
-                        },
-                        timeout=10,
-                    )
-                    if api_r.status_code == 200:
-                        data = api_r.json().get("data", {})
-                        avatar = data.get("snoovatar_img") or data.get("icon_img") or ""
-                        if avatar and "?" in avatar:
-                            avatar = avatar.split("?")[0]
-                        if avatar:
-                            log.info("Reddit avatar: got via OAuth")
-                            return avatar
-        except Exception as exc:
-            log.debug("Reddit OAuth avatar failed: %s", exc)
+        return posts, subreddits
 
-    # ── Strategy 2: Redlib scrape ──
-    for base in _REDLIB_INSTANCES:
+    def _parse_comment_children(self, children: list) -> tuple:
+        posts = []
+        subreddits = set()
+        for child in children:
+            if child.get("kind") != "t1":
+                continue
+            d = child["data"]
+            sub = d.get("subreddit", "")
+            if sub and not sub.startswith("u_"):
+                subreddits.add(sub)
+            else:
+                sub = ""
+
+            body = d.get("body", "")
+            if body in ("[removed]", "[deleted]"):
+                body = ""
+
+            permalink = d.get("permalink", "")
+            post_url = ("https://reddit.com" + permalink) if permalink else ""
+
+            posts.append(
+                Post(
+                    text=body,
+                    timestamp=float(d.get("created_utc", 0)),
+                    metadata={
+                        "type": "comment",
+                        "subreddit": sub,
+                        "score": d.get("score", 0),
+                        "url": post_url,
+                        "images": [],
+                    },
+                )
+            )
+        return posts, subreddits
+
+
+# ──────────────────────────────────────────────
+# SOURCE 2 & 3: Redlib HTML (self-hosted + public)
+# ──────────────────────────────────────────────
+
+
+class RedlibCollector:
+    """
+    Collects Reddit data by scraping a Redlib instance (HTML).
+    Used for both self-hosted (aria-redlib:8080) and public instances.
+    """
+
+    def __init__(self, base_url: str, label: str):
+        self.base = base_url.rstrip("/")
+        self.label = label  # for logging
+
+    def _fetch(self, path: str) -> httpx.Response:
+        r = httpx.get(
+            f"{self.base}{path}",
+            headers=BROWSER_HEADERS,
+            timeout=12,
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            raise ValueError(
+                f"Redlib [{self.label}]: HTTP {r.status_code} for {path}"
+            )
+        if len(r.text) < 3000:
+            raise ValueError(
+                f"Redlib [{self.label}]: response too short for {path} — likely down"
+            )
+        if _is_bot_challenge(r.text):
+            raise ValueError(
+                f"Redlib [{self.label}]: anti-bot challenge for {path}"
+            )
+        return r
+
+    def probe(self) -> bool:
+        """Quick liveness check — returns True if instance is reachable."""
         try:
             r = httpx.get(
-                f"{base}/user/{username}",
-                headers=_REDLIB_HEADERS,
-                timeout=6,
+                f"{self.base}/",
+                headers=BROWSER_HEADERS,
+                timeout=5,
                 follow_redirects=True,
             )
-            if r.status_code != 200 or len(r.text) < 5000:
-                continue
-            # Skip anti-bot challenge pages
-            low = r.text[:2000].lower()
-            if (
-                "just a moment" in low
-                or "enable cookies" in low
-                or "checking your browser" in low
-            ):
-                continue
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
-            if img_el:
-                src = img_el.get("src", "")
-                if src:
-                    if src.startswith("/"):
-                        src = base + src
-                    log.info("Reddit avatar: got via Redlib (%s)", base)
-                    return src
+            return r.status_code == 200 and not _is_bot_challenge(r.text)
         except Exception:
-            continue
+            return False
 
-    log.debug(
-        "Reddit avatar: unavailable for u/%s (no OAuth creds, no Redlib)", username
-    )
-    return ""
+    def collect(self, username: str, limit: int = 100) -> AccountProfile:
+        log.info(
+            "Reddit [Redlib/%s]: collecting u/%s (limit=%d)",
+            self.label, username, limit,
+        )
+
+        profile_r = self._fetch(f"/user/{username}")
+        soup = BeautifulSoup(profile_r.text, "html.parser")
+
+        display_name, bio, karma, created_utc, avatar = self._parse_profile(soup)
+
+        sub_posts, sub_subs = self._parse_submissions(username, limit)
+        com_posts, com_subs = self._parse_comments(username, limit)
+
+        all_posts = sub_posts + com_posts
+        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
+        all_subs = sub_subs | com_subs
+
+        log.info(
+            "Reddit [Redlib/%s] ✓: u/%s — %d total posts, %d subreddits",
+            self.label, username, len(all_posts), len(all_subs),
+        )
+
+        return AccountProfile(
+            platform="reddit",
+            username=username,
+            display_name=display_name or username,
+            bio=bio,
+            location="",
+            profile_image_url=avatar,
+            created_utc=created_utc,
+            posts=all_posts,
+            subreddits=sorted(s for s in all_subs if s),
+            karma=karma,
+        )
+
+    def _parse_profile(self, soup) -> tuple:
+        display_name, bio, karma, created_utc, avatar = "", "", None, None, ""
+
+        name_el = soup.select_one("#user_title") or soup.select_one("#user > header h1")
+        if name_el:
+            display_name = name_el.text.strip().lstrip("u/").strip()
+
+        bio_el = soup.select_one("#user_description") or soup.select_one("p.description")
+        if bio_el:
+            bio = bio_el.text.strip()
+
+        details_el = soup.select_one("#user_details")
+        if details_el:
+            labels = [el.text.strip().lower() for el in details_el.select("label")]
+            values = [el.text.strip() for el in details_el.select("div")]
+            for i, label in enumerate(labels):
+                if i >= len(values):
+                    break
+                if "karma" in label:
+                    try:
+                        karma = int(values[i].replace(",", "").replace(".", ""))
+                    except Exception:
+                        pass
+                elif "created" in label:
+                    try:
+                        raw = values[i].strip().replace("'", "20")
+                        created_utc = (
+                            datetime.strptime(raw, "%b %d %Y")
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
+
+        img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
+        if img_el:
+            src = img_el.get("src", "")
+            if src:
+                avatar = (self.base + src) if src.startswith("/") else src
+
+        return display_name, bio, karma, created_utc, avatar
+
+    def _parse_submissions(self, username: str, limit: int) -> tuple:
+        posts, subreddits, after, fetched = [], set(), "", 0
+        while fetched < limit:
+            path = f"/user/{username}/submitted"
+            if after:
+                path += f"?after={after}"
+            try:
+                r = self._fetch(path)
+                soup = BeautifulSoup(r.text, "html.parser")
+            except Exception as exc:
+                log.warning("Redlib [%s]: submissions page failed — %s", self.label, exc)
+                break
+            items = soup.select(".post")
+            if not items:
+                break
+            for item in items:
+                if fetched >= limit:
+                    break
+                title_links = item.select(".post_title a")
+                title_el = title_links[-1] if title_links else None
+                body_el = item.select_one(".post_body")
+                created_el = item.select_one(".created")
+                sub_el = item.select_one(".post_subreddit")
+                score_el = item.select_one(".post_score")
+
+                text, url = "", ""
+                if title_el:
+                    text = title_el.text.strip()
+                    raw_href = title_el.get("href", "")
+                    if raw_href.startswith("/"):
+                        url = "https://reddit.com" + raw_href
+                if body_el:
+                    bt = body_el.text.strip()
+                    if bt:
+                        text = (text + " " + bt).strip()
+
+                ts = 0.0
+                if created_el and created_el.get("title"):
+                    try:
+                        ts = (
+                            datetime.strptime(
+                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
+                            )
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
+
+                sub = ""
+                if sub_el:
+                    raw_sub = sub_el.text.strip()
+                    if raw_sub.startswith("r/"):
+                        sub = raw_sub[2:]
+                    if sub:
+                        subreddits.add(sub)
+
+                score = 0
+                if score_el:
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
+
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "submission",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                            "images": [],
+                        },
+                    )
+                )
+                fetched += 1
+
+            next_el = soup.select_one("a[rel='next']")
+            if next_el:
+                qs = parse_qs(urlparse(next_el.get("href", "")).query)
+                after = qs.get("after", [""])[0]
+            else:
+                break
+            if not after:
+                break
+        return posts, subreddits
+
+    def _parse_comments(self, username: str, limit: int) -> tuple:
+        posts, subreddits, after, fetched = [], set(), "", 0
+        while fetched < limit:
+            path = f"/user/{username}/comments"
+            if after:
+                path += f"?after={after}"
+            try:
+                r = self._fetch(path)
+                soup = BeautifulSoup(r.text, "html.parser")
+            except Exception as exc:
+                log.warning("Redlib [%s]: comments page failed — %s", self.label, exc)
+                break
+            items = soup.select(".comment")
+            if not items:
+                break
+            for item in items:
+                if fetched >= limit:
+                    break
+                body_el = item.select_one(".comment_body")
+                created_el = item.select_one(".created")
+                sub_el = item.select_one(".comment_subreddit")
+                score_el = item.select_one(".comment_score")
+                link_el = item.select_one(".comment_link")
+
+                raw_text = body_el.get_text(separator="\n").strip() if body_el else ""
+                images = []
+                clean_lines = []
+                for line in raw_text.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("/preview/pre/") or stripped.startswith("/img/"):
+                        images.append(self.base + stripped)
+                    else:
+                        clean_lines.append(line)
+                text = "\n".join(clean_lines).strip()
+
+                url = ""
+                if link_el:
+                    raw_href = link_el.get("href", "")
+                    if raw_href.startswith("/"):
+                        url = "https://reddit.com" + raw_href.split("#")[0]
+
+                ts = 0.0
+                if created_el and created_el.get("title"):
+                    try:
+                        ts = (
+                            datetime.strptime(
+                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
+                            )
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                    except Exception:
+                        pass
+
+                sub = ""
+                if sub_el:
+                    raw_sub = sub_el.text.strip()
+                    if raw_sub.startswith("r/"):
+                        sub = raw_sub[2:]
+                    if sub:
+                        subreddits.add(sub)
+
+                score = 0
+                if score_el:
+                    try:
+                        score = int(score_el.get("title", "0").replace(",", ""))
+                    except Exception:
+                        pass
+
+                posts.append(
+                    Post(
+                        text=text,
+                        timestamp=ts,
+                        metadata={
+                            "type": "comment",
+                            "subreddit": sub,
+                            "score": score,
+                            "url": url,
+                            "images": images,
+                        },
+                    )
+                )
+                fetched += 1
+
+            next_el = soup.find("a", string=lambda t: t and t.strip().upper() == "NEXT")
+            if not next_el:
+                break
+            qs = parse_qs(urlparse(next_el.get("href", "")).query)
+            after = qs.get("after", [""])[0]
+            if not after:
+                break
+        return posts, subreddits
 
 
-class RedditCollector:
+# ──────────────────────────────────────────────
+# SOURCE 4: old.reddit.com HTML
+# ──────────────────────────────────────────────
+
+
+class OldRedditCollector:
     """
-    Collects public Reddit profile data.
-    Tries old.reddit.com first (most reliable), falls back to Redlib instances.
-    Whichever source responds first is used for the entire collection.
+    Collects Reddit data by scraping old.reddit.com HTML.
+    Last-resort fallback — no avatar, but very stable HTML structure.
     """
 
-    BROWSER_HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
+    BASE = "https://old.reddit.com"
 
-    def _fetch(self, base: str, path: str) -> httpx.Response:
-        """Fetch a page, raise ValueError on non-200 or bot-challenge."""
+    def _fetch(self, path: str) -> httpx.Response:
         r = httpx.get(
-            f"{base}{path}",
-            headers=self.BROWSER_HEADERS,
+            f"{self.BASE}{path}",
+            headers=BROWSER_HEADERS,
             timeout=15,
             follow_redirects=True,
         )
         if r.status_code != 200:
-            raise ValueError(f"{base} returned {r.status_code} for {path}")
-        low = r.text[:2000].lower()
-        if (
-            "just a moment" in low
-            or "enable cookies" in low
-            or "checking your browser" in low
-            or "not a bot" in low
-        ):
-            raise ValueError(f"{base} returned anti-bot challenge for {path}")
+            raise ValueError(f"old.reddit.com: HTTP {r.status_code} for {path}")
+        if len(r.text) < 3000:
+            raise ValueError(f"old.reddit.com: response too short for {path}")
+        if _is_bot_challenge(r.text):
+            raise ValueError(f"old.reddit.com: anti-bot challenge for {path}")
         return r
 
-    def _pick_source(self, username: str) -> tuple:
-        """
-        Try Redlib instances first (provides avatar), fall back to old.reddit.com.
-        Returns (base_url, profile_soup, source_type) for the first that works.
-        """
-        sources = [("https://old.reddit.com", "oldreddit")] + [
-            (inst, "redlib") for inst in _REDLIB_INSTANCES
-        ]
-        for base, stype in sources:
-            try:
-                r = self._fetch(base, f"/user/{username}")
-                if len(r.text) < 3000:
-                    continue
-                soup = BeautifulSoup(r.text, "html.parser")
-                log.info("Reddit: using %s (%s) for u/%s", stype, base, username)
-                return base, soup, stype
-            except Exception as exc:
-                log.debug("Reddit source %s failed: %s", base, exc)
-                continue
-        raise ValueError(
-            f"Reddit user '{username}' not found — all sources (old.reddit.com + Redlib) failed."
+    def collect(self, username: str, limit: int = 100) -> AccountProfile:
+        log.info("Reddit [4/4 old.reddit.com]: collecting u/%s (limit=%d)", username, limit)
+
+        profile_r = self._fetch(f"/user/{username}")
+        soup = BeautifulSoup(profile_r.text, "html.parser")
+
+        display_name, bio, karma, created_utc = self._parse_profile(soup)
+        avatar = self._fetch_avatar(username)
+
+        sub_posts, sub_subs = self._parse_submissions(username, limit)
+        com_posts, com_subs = self._parse_comments(username, limit)
+
+        all_posts = sub_posts + com_posts
+        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
+        all_subs = sub_subs | com_subs
+
+        log.info(
+            "Reddit [old.reddit.com] ✓: u/%s — %d total posts, %d subreddits",
+            username, len(all_posts), len(all_subs),
         )
 
-    # ── old.reddit.com parsers ───────────────────────────
+        return AccountProfile(
+            platform="reddit",
+            username=username,
+            display_name=display_name or username,
+            bio=bio,
+            location="",
+            profile_image_url=avatar,
+            created_utc=created_utc,
+            posts=all_posts,
+            subreddits=sorted(s for s in all_subs if s),
+            karma=karma,
+        )
 
-    def _parse_profile_oldreddit(self, soup):
+    def _fetch_avatar(self, username: str) -> str:
+        """Try Reddit OAuth then public Redlib instances for avatar."""
+        client_id = os.environ.get("REDDIT_CLIENT_ID", "")
+        client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
+        if client_id and client_secret:
+            try:
+                token_r = httpx.post(
+                    "https://www.reddit.com/api/v1/access_token",
+                    auth=(client_id, client_secret),
+                    data={"grant_type": "client_credentials"},
+                    headers={"User-Agent": "ARIA-OSINT/1.0"},
+                    timeout=10,
+                )
+                if token_r.status_code == 200:
+                    token = token_r.json().get("access_token", "")
+                    if token:
+                        api_r = httpx.get(
+                            f"https://oauth.reddit.com/user/{username}/about",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "User-Agent": "ARIA-OSINT/1.0",
+                            },
+                            timeout=10,
+                        )
+                        if api_r.status_code == 200:
+                            d = api_r.json().get("data", {})
+                            av = d.get("snoovatar_img") or d.get("icon_img") or ""
+                            if av and "?" in av:
+                                av = av.split("?")[0]
+                            if av:
+                                return av
+            except Exception as exc:
+                log.debug("old.reddit.com: OAuth avatar failed: %s", exc)
+
+        # Try public Redlib for avatar
+        for base in _PUBLIC_REDLIB_INSTANCES[:3]:
+            try:
+                r = httpx.get(
+                    f"{base}/user/{username}",
+                    headers=BROWSER_HEADERS,
+                    timeout=6,
+                    follow_redirects=True,
+                )
+                if r.status_code != 200 or len(r.text) < 3000:
+                    continue
+                if _is_bot_challenge(r.text):
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
+                if img_el:
+                    src = img_el.get("src", "")
+                    if src:
+                        return (base + src) if src.startswith("/") else src
+            except Exception:
+                continue
+
+        log.debug("old.reddit.com: avatar unavailable for u/%s", username)
+        return ""
+
+    def _parse_profile(self, soup) -> tuple:
         display_name, bio, karma, created_utc = "", "", None, None
         titlebox = soup.select_one(".titlebox")
         if not titlebox:
@@ -402,7 +917,7 @@ class RedditCollector:
 
         return display_name, bio, karma, created_utc
 
-    def _parse_submissions_oldreddit(self, base, username, limit):
+    def _parse_submissions(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         page_size = min(25, limit)
         while fetched < limit:
@@ -410,10 +925,10 @@ class RedditCollector:
             if after:
                 path += f"&after={after}"
             try:
-                r = self._fetch(base, path)
+                r = self._fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
-                log.warning("Reddit: submissions page failed — %s", exc)
+                log.warning("old.reddit.com: submissions page failed — %s", exc)
                 break
             items = soup.select(".thing[data-type='link']")
             if not items:
@@ -496,7 +1011,7 @@ class RedditCollector:
                 break
         return posts, subreddits
 
-    def _parse_comments_oldreddit(self, base, username, limit):
+    def _parse_comments(self, username: str, limit: int) -> tuple:
         posts, subreddits, after, fetched = [], set(), "", 0
         page_size = min(25, limit)
         while fetched < limit:
@@ -504,10 +1019,10 @@ class RedditCollector:
             if after:
                 path += f"&after={after}"
             try:
-                r = self._fetch(base, path)
+                r = self._fetch(path)
                 soup = BeautifulSoup(r.text, "html.parser")
             except Exception as exc:
-                log.warning("Reddit: comments page failed — %s", exc)
+                log.warning("old.reddit.com: comments page failed — %s", exc)
                 break
             items = soup.select(".thing[data-type='comment']")
             if not items:
@@ -576,284 +1091,77 @@ class RedditCollector:
                 break
         return posts, subreddits
 
-    # ── Redlib parsers ───────────────────────────────────
 
-    def _parse_profile_redlib(self, soup, base):
-        display_name, bio, karma, created_utc, avatar = "", "", None, None, ""
+# ──────────────────────────────────────────────
+# RedditCollector — priority waterfall
+# ──────────────────────────────────────────────
 
-        name_el = soup.select_one("#user_title") or soup.select_one("#user > header h1")
-        if name_el:
-            display_name = name_el.text.strip().lstrip("u/").strip()
 
-        bio_el = soup.select_one("#user_description") or soup.select_one(
-            "p.description"
-        )
-        if bio_el:
-            bio = bio_el.text.strip()
-
-        details_el = soup.select_one("#user_details")
-        if details_el:
-            labels = [el.text.strip().lower() for el in details_el.select("label")]
-            values = [el.text.strip() for el in details_el.select("div")]
-            for i, label in enumerate(labels):
-                if i >= len(values):
-                    break
-                if "karma" in label:
-                    try:
-                        karma = int(values[i].replace(",", "").replace(".", ""))
-                    except Exception:
-                        pass
-                elif "created" in label:
-                    try:
-                        raw = values[i].strip().replace("'", "20")
-                        created_utc = (
-                            datetime.strptime(raw, "%b %d %Y")
-                            .replace(tzinfo=timezone.utc)
-                            .timestamp()
-                        )
-                    except Exception:
-                        pass
-
-        img_el = soup.select_one("#user_icon") or soup.select_one("#user img")
-        if img_el:
-            src = img_el.get("src", "")
-            if src:
-                avatar = (base + src) if src.startswith("/") else src
-
-        return display_name, bio, karma, created_utc, avatar
-
-    def _parse_submissions_redlib(self, base, username, limit):
-        posts, subreddits, after, fetched = [], set(), "", 0
-        while fetched < limit:
-            path = f"/user/{username}/submitted"
-            if after:
-                path += f"?after={after}"
-            try:
-                r = self._fetch(base, path)
-                soup = BeautifulSoup(r.text, "html.parser")
-            except Exception as exc:
-                log.warning("Reddit: Redlib submissions failed — %s", exc)
-                break
-            items = soup.select(".post")
-            if not items:
-                break
-            for item in items:
-                if fetched >= limit:
-                    break
-                title_links = item.select(".post_title a")
-                title_el = title_links[-1] if title_links else None
-                body_el = item.select_one(".post_body")
-                created_el = item.select_one(".created")
-                sub_el = item.select_one(".post_subreddit")
-                score_el = item.select_one(".post_score")
-
-                text, url = "", ""
-                if title_el:
-                    text = title_el.text.strip()
-                    raw_href = title_el.get("href", "")
-                    if raw_href.startswith("/"):
-                        url = "https://reddit.com" + raw_href
-                if body_el:
-                    bt = body_el.text.strip()
-                    if bt:
-                        text = (text + " " + bt).strip()
-
-                ts = 0.0
-                if created_el and created_el.get("title"):
-                    try:
-                        ts = (
-                            datetime.strptime(
-                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
-                            )
-                            .replace(tzinfo=timezone.utc)
-                            .timestamp()
-                        )
-                    except Exception:
-                        pass
-
-                sub = ""
-                if sub_el:
-                    raw_sub = sub_el.text.strip()
-                    if raw_sub.startswith("r/"):
-                        sub = raw_sub[2:]
-                    if sub:
-                        subreddits.add(sub)
-
-                score = 0
-                if score_el:
-                    try:
-                        score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception:
-                        pass
-
-                posts.append(
-                    Post(
-                        text=text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "submission",
-                            "subreddit": sub,
-                            "score": score,
-                            "url": url,
-                        },
-                    )
-                )
-                fetched += 1
-
-            next_el = soup.select_one("a[rel='next']")
-            if next_el:
-                qs = parse_qs(urlparse(next_el.get("href", "")).query)
-                after = qs.get("after", [""])[0]
-            else:
-                break
-            if not after:
-                break
-        return posts, subreddits
-
-    def _parse_comments_redlib(self, base, username, limit):
-        posts, subreddits, after, fetched = [], set(), "", 0
-        while fetched < limit:
-            path = f"/user/{username}/comments"
-            if after:
-                path += f"?after={after}"
-            try:
-                r = self._fetch(base, path)
-                soup = BeautifulSoup(r.text, "html.parser")
-            except Exception as exc:
-                log.warning("Reddit: Redlib comments failed — %s", exc)
-                break
-            items = soup.select(".comment")
-            if not items:
-                break
-            for item in items:
-                if fetched >= limit:
-                    break
-                body_el = item.select_one(".comment_body")
-                created_el = item.select_one(".created")
-                sub_el = item.select_one(".comment_subreddit")
-                score_el = item.select_one(".comment_score")
-                link_el = item.select_one(".comment_link")
-
-                raw_text = body_el.get_text(separator="\n").strip() if body_el else ""
-                # Strip Redlib-proxied image paths from text, collect as image URLs
-                images = []
-                clean_lines = []
-                for line in raw_text.splitlines():
-                    stripped = line.strip()
-                    if stripped.startswith("/preview/pre/") or stripped.startswith(
-                        "/img/"
-                    ):
-                        images.append(base + stripped)
-                    else:
-                        clean_lines.append(line)
-                text = "\n".join(clean_lines).strip()
-
-                url = ""
-                if link_el:
-                    raw_href = link_el.get("href", "")
-                    if raw_href.startswith("/"):
-                        url = "https://reddit.com" + raw_href.split("#")[0]
-
-                ts = 0.0
-                if created_el and created_el.get("title"):
-                    try:
-                        ts = (
-                            datetime.strptime(
-                                created_el["title"], "%b %d %Y, %H:%M:%S UTC"
-                            )
-                            .replace(tzinfo=timezone.utc)
-                            .timestamp()
-                        )
-                    except Exception:
-                        pass
-
-                sub = ""
-                if sub_el:
-                    raw_sub = sub_el.text.strip()
-                    if raw_sub.startswith("r/"):
-                        sub = raw_sub[2:]
-                    if sub:
-                        subreddits.add(sub)
-
-                score = 0
-                if score_el:
-                    try:
-                        score = int(score_el.get("title", "0").replace(",", ""))
-                    except Exception:
-                        pass
-
-                posts.append(
-                    Post(
-                        text=text,
-                        timestamp=ts,
-                        metadata={
-                            "type": "comment",
-                            "subreddit": sub,
-                            "score": score,
-                            "url": url,
-                            "images": images,
-                        },
-                    )
-                )
-                fetched += 1
-
-            next_el = soup.find("a", string=lambda t: t and t.strip().upper() == "NEXT")
-            if not next_el:
-                break
-            qs = parse_qs(urlparse(next_el.get("href", "")).query)
-            after = qs.get("after", [""])[0]
-            if not after:
-                break
-        return posts, subreddits
-
-    # ── Main entry point ─────────────────────────────────
+class RedditCollector:
+    """
+    Tries sources in priority order and returns on first success:
+      1. Reddit JSON API   (reddit.com/user/<u>/*.json)
+      2. Self-hosted Redlib (aria-redlib:8080)
+      3. Public Redlib instances (tried in order until one works)
+      4. old.reddit.com   (HTML scrape, last resort)
+    """
 
     def collect(self, username: str, limit: int = 100) -> AccountProfile:
-        log.info("Reddit: collecting u/%s (limit=%d)", username, limit)
+        errors = []
 
-        base, profile_soup, stype = self._pick_source(username)
+        # ── Priority 1: Reddit JSON API ──────────────────
+        try:
+            return RedditJSONCollector().collect(username, limit=limit)
+        except Exception as exc:
+            log.warning("Reddit [1/4 JSON API] failed for u/%s: %s", username, exc)
+            errors.append(f"JSON API: {exc}")
 
-        if stype == "oldreddit":
-            display_name, bio, karma, created_utc = self._parse_profile_oldreddit(
-                profile_soup
+        # ── Priority 2: Self-hosted Redlib ───────────────
+        self_hosted = RedlibCollector(_SELF_HOSTED_REDLIB, label="self-hosted")
+        try:
+            if self_hosted.probe():
+                return self_hosted.collect(username, limit=limit)
+            else:
+                msg = f"self-hosted Redlib at {_SELF_HOSTED_REDLIB} not reachable"
+                log.info("Reddit [2/4 Redlib/self-hosted]: %s", msg)
+                errors.append(msg)
+        except Exception as exc:
+            log.warning(
+                "Reddit [2/4 Redlib/self-hosted] failed for u/%s: %s", username, exc
             )
-            profile_image_url = _fetch_reddit_avatar(username)
-            sub_posts, sub_subs = self._parse_submissions_oldreddit(
-                base, username, limit
+            errors.append(f"self-hosted Redlib: {exc}")
+
+        # ── Priority 3: Public Redlib instances ──────────
+        for idx, instance_url in enumerate(_PUBLIC_REDLIB_INSTANCES, start=1):
+            label = f"public-{idx}"
+            collector = RedlibCollector(instance_url, label=label)
+            try:
+                if not collector.probe():
+                    log.debug(
+                        "Reddit [3/4 Redlib/%s]: %s not reachable, skipping",
+                        label, instance_url,
+                    )
+                    continue
+                return collector.collect(username, limit=limit)
+            except Exception as exc:
+                log.warning(
+                    "Reddit [3/4 Redlib/%s] failed for u/%s: %s",
+                    label, username, exc,
+                )
+                errors.append(f"Redlib {instance_url}: {exc}")
+
+        # ── Priority 4: old.reddit.com ───────────────────
+        try:
+            return OldRedditCollector().collect(username, limit=limit)
+        except Exception as exc:
+            log.warning(
+                "Reddit [4/4 old.reddit.com] failed for u/%s: %s", username, exc
             )
-            com_posts, com_subs = self._parse_comments_oldreddit(base, username, limit)
-        else:
-            display_name, bio, karma, created_utc, profile_image_url = (
-                self._parse_profile_redlib(profile_soup, base)
-            )
-            sub_posts, sub_subs = self._parse_submissions_redlib(base, username, limit)
-            com_posts, com_subs = self._parse_comments_redlib(base, username, limit)
+            errors.append(f"old.reddit.com: {exc}")
 
-        all_posts = sub_posts + com_posts
-        all_posts.sort(key=lambda p: p.timestamp, reverse=True)
-        all_subs = sub_subs | com_subs
-
-        display_name = display_name or username
-
-        log.info(
-            "Reddit: u/%s — %d posts, %d subreddits (via %s)",
-            username,
-            len(all_posts),
-            len(all_subs),
-            stype,
-        )
-
-        return AccountProfile(
-            platform="reddit",
-            username=username,
-            display_name=display_name,
-            bio=bio,
-            location="",
-            profile_image_url=profile_image_url,
-            created_utc=created_utc,
-            posts=all_posts,
-            subreddits=sorted(s for s in all_subs if s),
-            karma=karma,
+        raise ValueError(
+            f"Reddit user '{username}' could not be collected — all sources failed:\n"
+            + "\n".join(f"  • {e}" for e in errors)
         )
 
 
@@ -883,44 +1191,26 @@ class TwitterCollector:
         self._logged_in = False
 
     async def _ensure_login(self):
-        """Load cookies from env vars — no login flow needed."""
         if self._logged_in:
             return
-
         ct0 = os.environ.get("TWITTER_CT0")
         auth_token = os.environ.get("TWITTER_AUTH_TOKEN")
-
         if not ct0 or not auth_token:
             raise RuntimeError(
                 "Twitter cookies not set.\n"
                 "Add TWITTER_CT0 and TWITTER_AUTH_TOKEN to your .env file.\n"
                 "Extract them from DevTools → Application → Cookies → https://x.com"
             )
-
         self._client.set_cookies({"ct0": ct0, "auth_token": auth_token})
         self._logged_in = True
         log.info("Twitter: cookies loaded from env (ct0=...%s)", ct0[-6:])
 
     async def collect(self, username: str, limit: int = 100) -> AccountProfile:
-        """
-        Fetch public profile and recent tweets for a Twitter user.
-
-        Args:
-            username : Twitter handle with or without @.
-            limit    : Max tweets to collect.
-
-        Returns:
-            AccountProfile
-
-        Raises:
-            ValueError: User not found or unavailable.
-        """
         username = username.lstrip("@")
         log.info("Twitter: collecting @%s (limit=%d)", username, limit)
 
         await self._ensure_login()
 
-        # ── Resolve user ─────────────────────────────────
         try:
             user = await self._client.get_user_by_screen_name(username)
         except (UserNotFound, UserUnavailable) as exc:
@@ -930,7 +1220,6 @@ class TwitterCollector:
 
         created_utc = _twitter_ts_to_epoch(user.created_at)
 
-        # ── Timeline ─────────────────────────────────────
         posts: list = []
         page_size = min(40, limit)
         result = await self._client.get_user_tweets(
@@ -941,17 +1230,14 @@ class TwitterCollector:
 
         while result:
             for tweet in result:
-                # Skip retweets
                 if tweet.text.startswith("RT @"):
                     continue
                 ts = _twitter_ts_to_epoch(tweet.created_at)
 
-                # Extract media (photos/videos) attached to the tweet
                 images = []
                 try:
                     media_list = getattr(tweet, "media", None) or []
                     for m in media_list:
-                        # twikit media object: m.type ("photo"/"video"), m.media_url_https
                         media_url = getattr(m, "media_url_https", None) or getattr(
                             m, "url", None
                         )
@@ -995,7 +1281,6 @@ class TwitterCollector:
             display_name=user.name,
             bio=user.description or "",
             location=user.location or "",
-            # twikit returns _normal (48×48); replace with _400x400 for a usable size
             profile_image_url=(user.profile_image_url or "").replace(
                 "_normal", "_400x400"
             ),
@@ -1016,20 +1301,6 @@ _twitter_collector: Optional[TwitterCollector] = None
 
 
 def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
-    """
-    Collect public data for one account. Synchronous wrapper.
-
-    Args:
-        platform : "reddit" or "twitter"
-        username : account handle
-        limit    : max posts / tweets to fetch (default 100)
-
-    Returns:
-        AccountProfile
-
-    Raises:
-        ValueError: unsupported platform, or user not found / suspended
-    """
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
         raise ValueError(
@@ -1045,12 +1316,6 @@ def collect(platform: str, username: str, limit: int = 100) -> AccountProfile:
 async def collect_async(
     platform: str, username: str, limit: int = 100
 ) -> AccountProfile:
-    """
-    Async version of collect(). Use inside FastAPI or other async contexts.
-
-    Reddit collection is synchronous (httpx.get) and is offloaded to a thread
-    via run_in_executor so it does not block the event loop.
-    """
     platform = platform.lower().strip()
     if platform not in SUPPORTED_PLATFORMS:
         raise ValueError(
@@ -1079,18 +1344,6 @@ async def _collect_twitter(username: str, limit: int) -> AccountProfile:
 
 
 def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
-    """
-    Upsert an AccountProfile into PostgreSQL.
-    Run schema.sql first to create the required tables.
-
-    Args:
-        profile : AccountProfile returned by collect()
-        conn    : open psycopg2 connection
-        case_id : ID of the case this profile belongs to
-
-    Returns:
-        account_id of the inserted or updated row
-    """
     cur = conn.cursor()
 
     created_at_dt = (
