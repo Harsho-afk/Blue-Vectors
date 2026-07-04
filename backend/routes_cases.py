@@ -243,16 +243,10 @@ def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
         results = [dict(row) for row in cur.fetchall()]
 
         # OSINT lookups
-        if DB_TYPE == "sqlite":
-            cur.execute(
-                "SELECT id, lookup_type, input_value, result_json, created_at FROM osint_lookups WHERE case_id = ? ORDER BY created_at DESC",
-                (case_id,),
-            )
-        else:
-            cur.execute(
-                "SELECT id, lookup_type, input_value, result_json, created_at FROM osint_lookups WHERE case_id = %s ORDER BY created_at DESC",
-                (case_id,),
-            )
+        cur.execute(
+            "SELECT id, lookup_type, input_value, result_json, created_at FROM osint_lookups WHERE case_id = %s ORDER BY created_at DESC",
+            (case_id,),
+        )
         osint_rows = [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
