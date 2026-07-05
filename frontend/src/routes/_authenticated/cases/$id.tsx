@@ -751,14 +751,14 @@ function CaseDetail() {
     },
     {
       key: 'profiles',
-      title: 'Subject Dossier',
+      title: 'Profiles & Activity',
       description: 'Collected account data',
       icon: Activity,
       count: accounts.length,
     },
     {
       key: 'correlation',
-      title: 'Link Analysis',
+      title: 'Correlation',
       description: 'Identity signal comparison',
       icon: GitMerge,
       count: correlationResults.length,
@@ -771,7 +771,7 @@ function CaseDetail() {
     },
     {
       key: 'timeline',
-      title: 'Chronology',
+      title: 'Timeline',
       description: 'Chronological events',
       icon: Calendar,
     },
@@ -790,13 +790,13 @@ function CaseDetail() {
     },
     {
       key: 'intelligence',
-      title: 'Executive Briefing',
+      title: 'AI Briefing',
       description: 'Briefing and cited claims',
       icon: Bot,
     },
     {
       key: 'reports',
-      title: 'Case Documentation',
+      title: 'Report',
       description: 'Investigation report snapshots',
       icon: FileText,
     },
@@ -1052,7 +1052,7 @@ function CaseDetail() {
               <section id='identifiers' className='space-y-4'>
                 <SectionHeading
                   icon={Users}
-                  title={`Identifiers (${identifiers.length})`}
+                  title={`Subject Targets (${identifiers.length})`}
                   description='Seed inputs and collected accounts for this case'
                 />
                 <div className='space-y-4'>
@@ -1525,7 +1525,7 @@ function CaseDetail() {
               <section id='osint' className='space-y-4'>
                 <SectionHeading
                   icon={Search}
-                  title='OSINT Discovery'
+                  title='Data Collection'
                   description='Run and review open-source intelligence lookups'
                 />
                 <OsintPanel
@@ -1628,7 +1628,7 @@ function CaseDetail() {
               <section id='intelligence' className='space-y-4'>
                 <SectionHeading
                   icon={Bot}
-                  title='Intelligence'
+                  title='AI Briefing'
                   description='Generated briefing and cited claims'
                 />
                 <IntelligenceBriefing
@@ -1644,7 +1644,7 @@ function CaseDetail() {
               <section id='reports' className='space-y-4'>
                 <SectionHeading
                   icon={FileText}
-                  title='Reports'
+                  title='Report'
                   description='Versioned SOCMINT investigation report snapshots'
                 />
                 <ReportsPanel caseId={id} />
