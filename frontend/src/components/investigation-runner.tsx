@@ -77,14 +77,14 @@ interface Props {
 // ── Phase metadata ──────────────────────────────────────────────────────────
 
 const PHASE_META: Record<Phase, { label: string; icon: React.ElementType }> = {
-  discovery: { label: 'Platform Discovery', icon: Globe },
-  collection: { label: 'Deep Collection', icon: HardDrive },
+  discovery: { label: 'Data Collection', icon: Globe },
+  collection: { label: 'Subject Dossier Build', icon: HardDrive },
   breach: { label: 'Breach Analysis', icon: Shield },
   phone: { label: 'Phone Lookup', icon: Phone },
   dorking: { label: 'Web Expansion Survey', icon: Globe },
-  correlation: { label: 'Identity Correlation', icon: Zap },
-  insights: { label: 'Insight Analysis', icon: Sparkles },
-  intelligence: { label: 'Intelligence Briefing', icon: Bot },
+  correlation: { label: 'Link Analysis', icon: Zap },
+  insights: { label: 'Analytical Findings', icon: Sparkles },
+  intelligence: { label: 'Executive Briefing', icon: Bot },
 }
 
 const PHASE_ORDER: Phase[] = ['discovery', 'collection', 'breach', 'phone', 'dorking', 'correlation', 'insights', 'intelligence']
@@ -123,9 +123,9 @@ function stepLabel(event: StepEvent): string {
   if (step === 'breach') return `Check breaches for ${seed}`
   if (step === 'phone') return `Lookup phone ${seed}`
   if (step === 'dorking') return 'Web expansion survey (dorking)'
-  if (step === 'correlate') return 'Run identity correlation'
-  if (step === 'insights') return 'Compute insights'
-  if (step === 'intelligence') return 'Generate intelligence briefing'
+  if (step === 'correlate') return 'Run link analysis'
+  if (step === 'insights') return 'Compute analytical findings'
+  if (step === 'intelligence') return 'Generate executive briefing'
   return step
 }
 

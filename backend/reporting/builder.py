@@ -38,6 +38,7 @@ def generate_report(case_id: int, user_id: int) -> dict:
 
     report = {
         "report_metadata": _build_metadata(case_data, now),
+        "quick_overview": _build_quick_overview(case_data, references),
         "scope_and_methodology": _build_scope(case_data),
         "executive_summary": _build_executive_summary(case_data, references),
         "identified_accounts": _build_accounts_section(case_data, references),
@@ -162,6 +163,33 @@ def _build_executive_summary(case_data: dict, references: dict) -> dict:
         cat = ins.get("category", "unknown")
         insight_categories[cat] = insight_categories.get(cat, 0) + 1
 
+    key_takeaways = []
+    if accounts:
+        platform_names = sorted(set(a["platform"] for a in accounts))
+        key_takeaways.append(
+            f"{len(accounts)} accounts were collected across {len(platform_names)} platforms."
+        )
+    else:
+        key_takeaways.append("No accounts were collected for this case yet.")
+
+    if correlations:
+        high_count = band_counts.get("High", 0)
+        medium_count = band_counts.get("Medium", 0)
+        low_count = band_counts.get("Low", 0)
+        key_takeaways.append(
+            f"Correlation results are led by {high_count} high, {medium_count} medium, and {low_count} low confidence links."
+        )
+    else:
+        key_takeaways.append("No correlations are available yet.")
+
+    if insights:
+        top_category = max(insight_categories.items(), key=lambda item: item[1])[0]
+        key_takeaways.append(
+            f"The strongest insight activity appears in the {top_category.replace('_', ' ')} category."
+        )
+    else:
+        key_takeaways.append("No analytical insights are available yet.")
+
     return {
         "total_accounts_collected": len(accounts),
         "total_platforms": len(set(a["platform"] for a in accounts)),
@@ -171,6 +199,59 @@ def _build_executive_summary(case_data: dict, references: dict) -> dict:
         "insight_categories": insight_categories,
         "total_sources": len(references["sources"]),
         "total_lookups": len(case_data["lookups"]),
+        "key_takeaways": key_takeaways,
+    }
+
+
+def _build_quick_overview(case_data: dict, references: dict) -> dict:
+    summary = _build_executive_summary(case_data, references)
+    band_counts = summary.get("correlation_bands", {})
+    total_correlations = max(summary.get("total_correlations", 0), 1)
+
+    return {
+        "headline": "At a glance summary for fast reading.",
+        "bullet_points": summary.get("key_takeaways", []),
+        "metrics": [
+            {
+                "label": "Accounts",
+                "value": summary.get("total_accounts_collected", 0),
+                "detail": f"Across {summary.get('total_platforms', 0)} platforms",
+            },
+            {
+                "label": "Correlations",
+                "value": summary.get("total_correlations", 0),
+                "detail": "Links found between collected accounts",
+            },
+            {
+                "label": "Sources",
+                "value": summary.get("total_sources", 0),
+                "detail": "Open-source references used",
+            },
+        ],
+        "confidence_breakdown": [
+            {
+                "label": "High",
+                "count": band_counts.get("High", 0),
+                "percent": round((band_counts.get("High", 0) / total_correlations) * 100, 1),
+            },
+            {
+                "label": "Medium",
+                "count": band_counts.get("Medium", 0),
+                "percent": round((band_counts.get("Medium", 0) / total_correlations) * 100, 1),
+            },
+            {
+                "label": "Low",
+                "count": band_counts.get("Low", 0),
+                "percent": round((band_counts.get("Low", 0) / total_correlations) * 100, 1),
+            },
+        ],
+        "priority_flags": [
+            "High-confidence items should be reviewed first.",
+            "Low-confidence items need supporting evidence before being treated as meaningful.",
+            "Every conclusion remains an analytical assessment, not proof of identity.",
+        ] if case_data.get("correlations") else [
+            "Run collection and correlation to populate the report with evidence-backed findings.",
+        ],
     }
 
 

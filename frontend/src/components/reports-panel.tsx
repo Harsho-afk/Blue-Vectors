@@ -417,7 +417,7 @@ function ReportPreview({
         <CardHeader>
           <div className='flex items-center justify-between'>
             <div>
-              <CardTitle>SOCMINT Investigation Report</CardTitle>
+              <CardTitle>Case Documentation</CardTitle>
               <CardDescription>
                 {meta.case_title} — Generated{' '}
                 {new Date(meta.generated_at).toLocaleString()}
@@ -613,7 +613,7 @@ function ReportPreview({
         <Card>
           <CardHeader className='pb-3'>
             <CardTitle className='flex items-center gap-2 text-base'>
-              Intelligence Briefing
+              Executive Briefing
               <Badge variant='secondary' className='text-xs'>
                 AI-Assisted
               </Badge>

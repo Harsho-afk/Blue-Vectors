@@ -124,7 +124,7 @@ export function IntelligenceBriefing({
         <CardContent className='py-12 text-center'>
           <Bot className='mx-auto mb-2 h-8 w-8 text-muted-foreground' />
           <p className='mb-3 text-sm text-muted-foreground'>
-            No intelligence briefing yet.
+            No executive briefing yet.
           </p>
           {error && (
             <div className='mx-auto mb-3 max-w-md rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive'>
@@ -137,11 +137,11 @@ export function IntelligenceBriefing({
             size='sm'
           >
             <Sparkles className='h-4 w-4' />
-            Generate Briefing
+            Generate Executive Briefing
           </Button>
           {insights.length === 0 && (
             <p className='mt-2 text-xs text-muted-foreground'>
-              Run insights first before generating a briefing.
+              Run analytical findings first before generating a briefing.
             </p>
           )}
         </CardContent>
@@ -155,7 +155,7 @@ export function IntelligenceBriefing({
         <CardContent className='flex flex-col items-center py-12'>
           <Loader2 className='mb-3 h-8 w-8 animate-spin text-primary' />
           <p className='text-sm text-muted-foreground'>
-            Generating intelligence briefing...
+            Generating executive briefing...
           </p>
         </CardContent>
       </Card>
@@ -170,7 +170,7 @@ export function IntelligenceBriefing({
         <div className='flex items-center justify-between'>
           <CardTitle className='flex items-center gap-2'>
             <Bot className='h-4 w-4' />
-            Intelligence Briefing
+            Executive Briefing
           </CardTitle>
           <div className='flex items-center gap-2'>
             <Badge
@@ -187,7 +187,7 @@ export function IntelligenceBriefing({
               size='sm'
             >
               <Sparkles className='h-3 w-3' />
-              Regenerate
+              Regenerate Briefing
             </Button>
           </div>
         </div>

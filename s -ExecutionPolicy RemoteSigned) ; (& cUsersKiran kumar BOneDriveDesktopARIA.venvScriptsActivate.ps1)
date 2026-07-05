@@ -1,0 +1,25 @@
+[33m1e37464[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mlayer2[m[33m, [m[1;32mlayer3.1[m[33m, [m[1;32mlayer1[m[33m)[m Resolve merge conflicts by keeping layer1
+[33m44c8e1b[m[33m ([m[1;31morigin/layer2[m[33m, [m[1;32mlayer3[m[33m)[m added new styles
+[33m9ff8276[m[33m ([m[1;31morigin/layer1[m[33m)[m Added rich features
+[33m57f08fa[m Merge branch 'layer1' of https://github.com/Harsho-afk/ARIA into layer1
+[33ma8339d2[m add investigation graph and timeline view tabs
+[33m5227cf7[m add network info for insta and x
+[33mc07cdd3[m add correlation engine, LLM intelligence, investigation runner, and frontend improvements
+[33me7b2d45[m Implement new feature
+[33mac47241[m fix wa session lock
+[33m4874d19[m added edit/delete options
+[33m3b2f4c0[m rebuild frontend with shadcn-admin template + fix twitter collector crash
+[33m137fd4c[m add phone lookup
+[33mc3f0004[m add insta scraper
+[33mc25ed17[m Merge branch 'layer1' of https://github.com/Harsho-afk/ARIA into layer1
+[33m77bbb88[m fix insta scraper
+[33m802fac6[m correlation engine
+[33mda4bee7[m correlation engine
+[33m41f530e[m insta does not work
+[33m83b117d[m add insta scraper
+[33m3029f51[m add github scrapper
+[33m4820502[m update readme
+[33meb2c6c2[m fix: use dict key for RealDictCursor fetchone in osint save helpers
+[33m6889917[m fix: remove last DB_TYPE ref in routes_cases, add nginx proxy config for Docker
+[33m009474b[m fix: remove SQLite/DB_TYPE refs — align with PostgreSQL-only auth
+[33m411a154[m merge: resolve requirements.txt conflict — keep both sides' packages

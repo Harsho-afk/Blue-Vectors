@@ -10,6 +10,7 @@ from datetime import datetime
 def render_report_html(report: dict) -> str:
     """Render report_json into a complete HTML document string."""
     meta = report.get("report_metadata", {})
+    quick_overview = report.get("quick_overview", {})
     scope = report.get("scope_and_methodology", {})
     summary = report.get("executive_summary", {})
     accounts_section = report.get("identified_accounts", {})
@@ -23,6 +24,7 @@ def render_report_html(report: dict) -> str:
 
     parts = [_html_head(meta)]
     parts.append(_section_metadata(meta))
+    parts.append(_section_quick_overview(quick_overview))
     parts.append(_section_scope(scope))
     parts.append(_section_summary(summary))
     parts.append(_section_accounts(accounts_section))
@@ -79,6 +81,21 @@ th, td {{ padding: 0.5rem 0.75rem; text-align: left; border: 1px solid var(--bor
 th {{ background: var(--card-bg); font-weight: 600; }}
 .card {{ background: var(--card-bg); border: 1px solid var(--border);
   border-radius: 0.5rem; padding: 1rem; margin: 0.5rem 0; }}
+.overview-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin: 0.75rem 0 1rem; }}
+.metric {{ background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)); border: 1px solid var(--border); border-radius: 0.75rem; padding: 0.9rem 1rem; }}
+.metric-value {{ font-size: 1.7rem; font-weight: 700; line-height: 1.1; }}
+.metric-label {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.35rem; }}
+.metric-detail {{ color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }}
+.bullet-panel {{ display: grid; gap: 0.35rem; margin: 0.75rem 0; }}
+.bullet-panel li {{ margin: 0; }}
+.bar-chart {{ display: grid; gap: 0.6rem; margin-top: 0.75rem; }}
+.bar-row {{ display: grid; grid-template-columns: 72px 1fr 64px; gap: 0.75rem; align-items: center; }}
+.bar-track {{ height: 0.75rem; background: rgba(107,114,128,0.18); border-radius: 999px; overflow: hidden; }}
+.bar-fill {{ height: 100%; border-radius: 999px; background: var(--accent); }}
+.bar-fill.high {{ background: var(--high); }}
+.bar-fill.medium {{ background: var(--medium); }}
+.bar-fill.low {{ background: var(--low); }}
+.flags {{ display: grid; gap: 0.4rem; margin-top: 0.75rem; }}
 .badge {{ display: inline-block; padding: 0.125rem 0.5rem; border-radius: 0.25rem;
   font-size: 0.75rem; font-weight: 600; }}
 .badge-high {{ background: var(--high); color: white; }}
@@ -118,6 +135,45 @@ def _section_metadata(meta: dict) -> str:
 </div>"""
 
 
+def _section_quick_overview(overview: dict) -> str:
+    bullets = overview.get("bullet_points", [])
+    bullet_items = "".join(f"<li>{_e(item)}</li>" for item in bullets)
+
+    metrics_html = ""
+    for metric in overview.get("metrics", []):
+        metrics_html += f"""<div class=\"metric\">
+<div class=\"metric-label\">{_e(metric.get('label'))}</div>
+<div class=\"metric-value\">{_e(metric.get('value', 0))}</div>
+<div class=\"metric-detail\">{_e(metric.get('detail'))}</div>
+</div>"""
+
+    bars_html = ""
+    for item in overview.get("confidence_breakdown", []):
+        label = _e(item.get("label"))
+        count = item.get("count", 0)
+        percent = float(item.get("percent", 0) or 0)
+        bars_html += f"""<div class=\"bar-row\">
+<div><strong>{label}</strong></div>
+<div class=\"bar-track\"><div class=\"bar-fill {label.lower()}\" style=\"width: {max(0, min(percent, 100))}%\"></div></div>
+<div class=\"muted\">{count} / {percent:.1f}%</div>
+</div>"""
+
+    flags = "".join(f"<li>{_e(flag)}</li>" for flag in overview.get("priority_flags", []))
+
+    return f"""
+<h2>At a Glance</h2>
+<div class=\"card\">
+<p><strong>{_e(overview.get('headline', 'Summary'))}</strong></p>
+<div class=\"overview-grid\">{metrics_html}</div>
+<h3>Key Takeaways</h3>
+<ul class=\"bullet-panel\">{bullet_items}</ul>
+<h3>Confidence Split</h3>
+<div class=\"bar-chart\">{bars_html}</div>
+<h3>Review Priority</h3>
+<ul class=\"bullet-panel flags\">{flags}</ul>
+</div>"""
+
+
 def _section_scope(scope: dict) -> str:
     seeds_html = ""
     for s in scope.get("seed_identifiers", []):
@@ -147,6 +203,7 @@ def _section_summary(summary: dict) -> str:
     bands = summary.get("correlation_bands", {})
     cats = summary.get("insight_categories", {})
     cat_rows = "".join(f"<li>{_e(k)}: {v}</li>" for k, v in cats.items())
+    takeaway_rows = "".join(f"<li>{_e(item)}</li>" for item in summary.get("key_takeaways", []))
 
     return f"""
 <h2>Executive Summary</h2>
@@ -162,6 +219,8 @@ def _section_summary(summary: dict) -> str:
 <th>Insights</th><td>{summary.get('total_insights', 0)}</td></tr>
 </table>
 </div>
+<h3>Plain-Language Summary</h3>
+<ul class="bullet-panel">{takeaway_rows}</ul>
 <h3>Insights by Category</h3>
 <ul>{cat_rows}</ul>"""
 
