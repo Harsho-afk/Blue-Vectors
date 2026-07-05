@@ -6,6 +6,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  SidebarSeparator,
 } from '@/components/ui/sidebar'
 import { AppTitle } from './app-title'
 import { sidebarData } from './data/sidebar-data'
@@ -24,9 +25,10 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
-      <SidebarHeader>
+      <SidebarHeader className='pb-0'>
         <AppTitle />
       </SidebarHeader>
+      <SidebarSeparator />
       <SidebarContent>
         {sidebarData.navGroups.map((props) => (
           <NavGroup key={props.title} {...props} />

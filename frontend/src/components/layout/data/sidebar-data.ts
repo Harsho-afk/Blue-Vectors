@@ -20,7 +20,7 @@ export const sidebarData: SidebarData = {
   teams: [],
   navGroups: [
     {
-      title: 'General',
+      title: 'Navigation',
       items: [
         {
           title: 'Dashboard',
