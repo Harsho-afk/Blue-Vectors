@@ -13,7 +13,6 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
-    PageBreak,
     KeepTogether,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -43,12 +42,23 @@ def _e(text) -> str:
     return html.escape(str(text))
 
 
+_CONFIDENCE_PLAIN = {
+    "high": "Strong evidence — very likely accurate.",
+    "medium": "Reasonable evidence — probably accurate, but not certain.",
+    "low": "Weak or thin evidence — worth a second look before relying on it.",
+}
+
+
+def _plain_confidence(band: str) -> str:
+    """Return a plain-English explanation of a confidence band."""
+    return _CONFIDENCE_PLAIN.get((band or "").lower(), "Confidence level for this finding.")
+
+
 def render_report_pdf(report: dict) -> bytes:
     """
     Renders structured report JSON into PDF bytes.
     """
     meta = report.get("report_metadata", {})
-    quick_overview = report.get("quick_overview", {})
     scope = report.get("scope_and_methodology", {})
     summary = report.get("executive_summary", {})
     accounts_section = report.get("identified_accounts", {})
@@ -173,6 +183,7 @@ def render_report_pdf(report: dict) -> bytes:
     elements.append(draw_hr())
     elements.append(Spacer(1, 10))
 
+    # ── 1. Report Metadata ──
     elements.append(Paragraph("Report Metadata", h1_style))
     meta_rows = [
         [Paragraph("<b>Case ID</b>", bold_body_style), Paragraph(str(meta.get("case_id", "")), body_style)],
@@ -196,90 +207,22 @@ def render_report_pdf(report: dict) -> bytes:
     elements.append(meta_table)
     elements.append(Spacer(1, 15))
 
-    # ── 2. At a Glance ──
-    elements.append(Paragraph("At a Glance", h1_style))
-    headline = quick_overview.get("headline", "Investigation Summary")
-    elements.append(Paragraph(f"<b>Summary:</b> {_e(headline)}", body_style))
-    elements.append(Spacer(1, 5))
+    # ── 2. Intelligence Briefing (AI narrative), directly below metadata ──
+    if intelligence:
+        elements.append(Paragraph("Executive Intelligence Briefing", h1_style))
+        elements.append(Paragraph("<i>[AI-ASSISTED SYNTHESIS]</i>", disclaimer_style))
+        narrative = intelligence.get("narrative", "")
+        if narrative:
+            # Split by double newline to preserve paragraph separation
+            paragraphs = re.split(r"\n\s*\n", narrative.strip())
+            for p_text in paragraphs:
+                elements.append(Paragraph(_e(p_text), body_style))
+                elements.append(Spacer(1, 6))
+        elements.append(Spacer(1, 8))
 
-    # Metric blocks as a table
-    metrics = quick_overview.get("metrics", [])
-    metric_cols = []
-    for m in metrics[:4]:
-        metric_cols.append(
-            Paragraph(
-                f"<font size='14'><b>{_e(m.get('value', 0))}</b></font><br/>"
-                f"<font size='7.5' color='{MUTED_COLOR.hexval()}'><b>{_e(m.get('label', ''))}</b></font><br/>"
-                f"<font size='7' color='{MUTED_COLOR.hexval()}'>{_e(m.get('detail', ''))}</font>",
-                body_style,
-            )
-        )
-    # Pad to 4 columns if less
-    while len(metric_cols) < 4:
-        metric_cols.append(Paragraph("", body_style))
+    # ── 3. Summary (AI-generated executive summary) ──
+    elements.append(Paragraph("Summary", h1_style))
 
-    metrics_table = Table([metric_cols], colWidths=[126, 126, 126, 126])
-    metrics_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
-                ("GRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("PADDING", (0, 0), (-1, -1), 8),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]
-        )
-    )
-    elements.append(metrics_table)
-    elements.append(Spacer(1, 10))
-
-    # Key Takeaways
-    bullets = quick_overview.get("bullet_points", [])
-    if bullets:
-        elements.append(Paragraph("Key Takeaways", h2_style))
-        for bullet in bullets:
-            elements.append(Paragraph(f"• {_e(bullet)}", bullet_style))
-        elements.append(Spacer(1, 10))
-
-    # Priority Flags
-    flags = quick_overview.get("priority_flags", [])
-    if flags:
-        elements.append(Paragraph("Review Priority Flags", h2_style))
-        for flag in flags:
-            elements.append(Paragraph(f"• <font color='red'><b>[ALERT]</b></font> {_e(flag)}", bullet_style))
-        elements.append(Spacer(1, 10))
-
-    # ── 3. Scope & Methodology ──
-    elements.append(PageBreak())
-    elements.append(Paragraph("Scope &amp; Methodology", h1_style))
-    elements.append(Paragraph("Seed Identifiers", h2_style))
-    for s in scope.get("seed_identifiers", []):
-        hint = f" ({_e(s['platform_hint'])})" if s.get("platform_hint") else ""
-        elements.append(Paragraph(f"• <b>{_e(s.get('type','').upper())}</b>: {_e(s.get('value',''))}{hint}", bullet_style))
-    elements.append(Spacer(1, 8))
-
-    methods_str = ", ".join(scope.get("collection_methods", []))
-    platforms_str = ", ".join(scope.get("platforms_collected", []))
-    elements.append(Paragraph(f"<b>Collection Methods:</b> {_e(methods_str)}", body_style))
-    elements.append(Paragraph(f"<b>Platforms Searched:</b> {_e(platforms_str)}", body_style))
-
-    window = scope.get("collection_window")
-    if window:
-        elements.append(
-            Paragraph(
-                f"<b>Collection Window:</b> {_e(window.get('earliest', ''))} — {_e(window.get('latest', ''))}",
-                body_style,
-            )
-        )
-    elements.append(Spacer(1, 8))
-
-    statement = scope.get("public_source_statement", "")
-    if statement:
-        elements.append(Paragraph(f"<i>{_e(statement)}</i>", disclaimer_style))
-    elements.append(Spacer(1, 10))
-
-    # ── 4. Executive Summary ──
-    elements.append(Paragraph("Executive Summary Statistics", h1_style))
     summary_bands = summary.get("correlation_bands", {})
     summary_cats = summary.get("insight_categories", {})
 
@@ -326,7 +269,7 @@ def render_report_pdf(report: dict) -> bytes:
 
     takeaways = summary.get("key_takeaways", [])
     if takeaways:
-        elements.append(Paragraph("Key Summary Takeaways", h2_style))
+        elements.append(Paragraph("Key Takeaways", h2_style))
         for t in takeaways:
             elements.append(Paragraph(f"• {_e(t)}", bullet_style))
         elements.append(Spacer(1, 10))
@@ -337,8 +280,35 @@ def render_report_pdf(report: dict) -> bytes:
             elements.append(Paragraph(f"• <b>{_e(cat)}</b>: {val}", bullet_style))
         elements.append(Spacer(1, 10))
 
+    # ── 4. Scope & Methodology ──
+    elements.append(Paragraph("Scope &amp; Methodology", h1_style))
+    elements.append(Paragraph("Seed Identifiers", h2_style))
+    for s in scope.get("seed_identifiers", []):
+        hint = f" ({_e(s['platform_hint'])})" if s.get("platform_hint") else ""
+        elements.append(Paragraph(f"• <b>{_e(s.get('type','').upper())}</b>: {_e(s.get('value',''))}{hint}", bullet_style))
+    elements.append(Spacer(1, 8))
+
+    methods_str = ", ".join(scope.get("collection_methods", []))
+    platforms_str = ", ".join(scope.get("platforms_collected", []))
+    elements.append(Paragraph(f"<b>Collection Methods:</b> {_e(methods_str)}", body_style))
+    elements.append(Paragraph(f"<b>Platforms Searched:</b> {_e(platforms_str)}", body_style))
+
+    window = scope.get("collection_window")
+    if window:
+        elements.append(
+            Paragraph(
+                f"<b>Collection Window:</b> {_e(window.get('earliest', ''))} — {_e(window.get('latest', ''))}",
+                body_style,
+            )
+        )
+    elements.append(Spacer(1, 8))
+
+    statement = scope.get("public_source_statement", "")
+    if statement:
+        elements.append(Paragraph(f"<i>{_e(statement)}</i>", disclaimer_style))
+    elements.append(Spacer(1, 10))
+
     # ── 5. Identified Accounts ──
-    elements.append(PageBreak())
     elements.append(Paragraph("Identified Accounts", h1_style))
 
     collected_accounts = accounts_section.get("collected_accounts", [])
@@ -423,7 +393,6 @@ def render_report_pdf(report: dict) -> bytes:
         elements.append(Spacer(1, 10))
 
     # ── 6. Correlation Findings ──
-    elements.append(PageBreak())
     elements.append(Paragraph("Correlation Findings", h1_style))
     if not correlations:
         elements.append(Paragraph("No significant identity correlations detected.", body_style))
@@ -447,6 +416,7 @@ def render_report_pdf(report: dict) -> bytes:
                 f"Reference ID: {c.get('reference_id', '')}"
             )
             corr_blocks.append(Paragraph(meta_line, body_style))
+            corr_blocks.append(Paragraph(f"<i>{_e(_plain_confidence(band))}</i>", disclaimer_style))
             corr_blocks.append(Spacer(1, 4))
             corr_blocks.append(Paragraph(f"<b>Method:</b> {c.get('evidence_type', 'N/A')}", body_style))
             corr_blocks.append(Paragraph(f"<b>Assessment:</b> {_e(c.get('conclusion', ''))}", body_style))
@@ -469,7 +439,6 @@ def render_report_pdf(report: dict) -> bytes:
             elements.append(KeepTogether([card_table, Spacer(1, 10)]))
 
     # ── 7. Insights, Limitations, Confidence Framework ──
-    elements.append(PageBreak())
 
     # Insights
     elements.append(Paragraph("Analytical Insights", h1_style))
@@ -497,12 +466,20 @@ def render_report_pdf(report: dict) -> bytes:
 
     # Confidence Framework
     elements.append(Paragraph("Confidence Framework &amp; Disclaimers", h1_style))
+    elements.append(
+        Paragraph(
+            "In plain terms: \"High\" means we're pretty sure, \"Medium\" means it's a good "
+            "guess, and \"Low\" means treat it as an unverified tip.",
+            disclaimer_style,
+        )
+    )
     band_defs = confidence.get("band_definitions", {})
     for band, desc in band_defs.items():
         band_color = CONFIDENCE_COLORS.get(band, MUTED_COLOR)
         elements.append(
             Paragraph(
-                f"• <font color='{band_color.hexval()}'><b>{band} Confidence</b></font>: {_e(desc)}",
+                f"• <font color='{band_color.hexval()}'><b>{band} Confidence</b></font>: {_e(desc)} "
+                f"<i>({_e(_plain_confidence(band))})</i>",
                 bullet_style,
             )
         )
@@ -511,18 +488,6 @@ def render_report_pdf(report: dict) -> bytes:
     if disclaimer:
         elements.append(Paragraph(f"<i>{_e(disclaimer)}</i>", disclaimer_style))
     elements.append(Spacer(1, 12))
-
-    # ── 8. Intelligence Briefing (AI narrative) ──
-    if intelligence:
-        elements.append(Paragraph("Executive Intelligence Briefing", h1_style))
-        elements.append(Paragraph("<i>[AI-ASSISTED SYNTHESIS]</i>", disclaimer_style))
-        narrative = intelligence.get("narrative", "")
-        if narrative:
-            # Split by double newline to preserve paragraph separation
-            paragraphs = re.split(r"\n\s*\n", narrative.strip())
-            for p_text in paragraphs:
-                elements.append(Paragraph(_e(p_text), body_style))
-                elements.append(Spacer(1, 6))
 
     # Build PDF doc
     doc.build(elements)

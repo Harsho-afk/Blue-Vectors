@@ -10,9 +10,7 @@ from datetime import datetime
 def render_report_html(report: dict) -> str:
     """Render report_json into a complete HTML document string."""
     meta = report.get("report_metadata", {})
-    quick_overview = report.get("quick_overview", {})
     scope = report.get("scope_and_methodology", {})
-    summary = report.get("executive_summary", {})
     accounts_section = report.get("identified_accounts", {})
     correlations = report.get("correlation_findings", [])
     sources = report.get("open_source_references", [])
@@ -24,17 +22,16 @@ def render_report_html(report: dict) -> str:
 
     parts = [_html_head(meta)]
     parts.append(_section_metadata(meta))
-    parts.append(_section_quick_overview(quick_overview))
+    if intelligence:
+        parts.append(_section_intelligence(intelligence))
+    parts.append(_section_summary(report))
     parts.append(_section_scope(scope))
-    parts.append(_section_summary(summary))
     parts.append(_section_accounts(accounts_section))
     parts.append(_section_correlations(correlations))
-    parts.append(_section_sources(sources))
     parts.append(_section_insights(insights))
     parts.append(_section_limitations(limitations))
     parts.append(_section_confidence(confidence))
-    if intelligence:
-        parts.append(_section_intelligence(intelligence))
+    parts.append(_section_sources(sources))
     parts.append(_section_appendix(appendix))
     parts.append(_html_footer())
 
@@ -48,6 +45,47 @@ def _e(text) -> str:
     return html.escape(str(text))
 
 
+_CONFIDENCE_PLAIN = {
+    "high": "Strong evidence — very likely accurate.",
+    "medium": "Reasonable evidence — probably accurate, but not certain.",
+    "low": "Weak or thin evidence — worth a second look before relying on it.",
+}
+
+
+def _plain_confidence(band: str) -> str:
+    """Return a plain-English explanation of a confidence band."""
+    return _CONFIDENCE_PLAIN.get((band or "").lower(), "Confidence level for this finding.")
+
+
+def _section_summary(report: dict) -> str:
+    """Executive summary — AI-generated stats, takeaways, and insight categories."""
+    summary = report.get("executive_summary", {})
+
+    bands = summary.get("correlation_bands", {})
+    cats = summary.get("insight_categories", {})
+    takeaway_items = "".join(f"<li>{_e(item)}</li>" for item in summary.get("key_takeaways", []))
+    cat_rows = "".join(f"<li>{_e(k)}: {v}</li>" for k, v in cats.items())
+
+    return f"""
+<h2>Summary</h2>
+<div class=\"card\">
+<table>
+<tr><th>Accounts collected</th><td>{summary.get('total_accounts_collected', 0)}</td>
+<th>Platforms</th><td>{summary.get('total_platforms', 0)}</td></tr>
+<tr><th>Correlations</th><td>{summary.get('total_correlations', 0)}</td>
+<th>Sources</th><td>{summary.get('total_sources', 0)}</td></tr>
+<tr><th>High-confidence</th><td>{bands.get('High', 0)}</td>
+<th>Medium</th><td>{bands.get('Medium', 0)}</td></tr>
+<tr><th>Low-confidence</th><td>{bands.get('Low', 0)}</td>
+<th>Insights</th><td>{summary.get('total_insights', 0)}</td></tr>
+</table>
+</div>
+<h3>Key Takeaways</h3>
+<ul class=\"bullet-panel\">{takeaway_items}</ul>
+<h3>Insights by Category</h3>
+<ul>{cat_rows}</ul>"""
+
+
 def _html_head(meta: dict) -> str:
     title = _e(meta.get("case_title", "SOCMINT Report"))
     return f"""<!DOCTYPE html>
@@ -58,24 +96,17 @@ def _html_head(meta: dict) -> str:
 <title>ARIA Report — {title}</title>
 <style>
 :root {{
-  --bg: #ffffff; --fg: #1a1a2e; --muted: #6b7280;
-  --accent: #3b82f6; --border: #e5e7eb;
+  --bg: #ffffff; --fg: #1f2937; --muted: #4b5563;
+  --primary: #1e3a8a; --accent: #3b82f6; --border: #e5e7eb;
   --card-bg: #f9fafb; --high: #16a34a; --medium: #d97706; --low: #6b7280;
-}}
-@media (prefers-color-scheme: dark) {{
-  :root {{
-    --bg: #0f172a; --fg: #e2e8f0; --muted: #94a3b8;
-    --accent: #60a5fa; --border: #334155;
-    --card-bg: #1e293b; --high: #4ade80; --medium: #fbbf24; --low: #94a3b8;
-  }}
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{ font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
   color: var(--fg); line-height: 1.6; padding: 2rem; max-width: 1000px; margin: 0 auto; }}
-h1 {{ font-size: 1.5rem; margin-bottom: 0.5rem; }}
+h1 {{ font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--primary); }}
 h2 {{ font-size: 1.2rem; margin: 2rem 0 0.75rem; padding-bottom: 0.25rem;
-  border-bottom: 2px solid var(--accent); }}
-h3 {{ font-size: 1rem; margin: 1rem 0 0.5rem; }}
+  color: var(--primary); border-bottom: 2px solid var(--primary); }}
+h3 {{ font-size: 1rem; margin: 1rem 0 0.5rem; color: var(--accent); }}
 table {{ width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.875rem; }}
 th, td {{ padding: 0.5rem 0.75rem; text-align: left; border: 1px solid var(--border); }}
 th {{ background: var(--card-bg); font-weight: 600; }}
@@ -102,14 +133,33 @@ th {{ background: var(--card-bg); font-weight: 600; }}
 .badge-medium {{ background: var(--medium); color: white; }}
 .badge-low {{ background: var(--low); color: white; }}
 .muted {{ color: var(--muted); font-size: 0.85rem; }}
-.disclaimer {{ background: var(--card-bg); border-left: 4px solid var(--medium);
-  padding: 0.75rem 1rem; margin: 1rem 0; font-size: 0.85rem; }}
+.disclaimer {{ background: var(--card-bg); border-left: 4px solid var(--primary);
+  padding: 0.75rem 1rem; margin: 1rem 0; font-size: 0.85rem; color: var(--muted); font-style: italic; }}
 ul {{ padding-left: 1.5rem; margin: 0.5rem 0; }}
 li {{ margin: 0.25rem 0; }}
 .overflow-x {{ overflow-x: auto; }}
+.plain-summary {{ background: linear-gradient(135deg, var(--card-bg), transparent);
+  border: 1px solid var(--border); border-left: 5px solid var(--accent);
+  border-radius: 0.75rem; padding: 1.25rem 1.5rem; margin: 1.25rem 0 1.5rem; }}
+.plain-summary h1 {{ font-size: 1.05rem; margin-bottom: 0.75rem; }}
+.plain-summary-intro {{ font-size: 0.95rem; margin-bottom: 1rem; }}
+.explainer-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem; margin: 0.75rem 0; }}
+.explainer-card {{ background: var(--bg); border: 1px solid var(--border);
+  border-radius: 0.6rem; padding: 0.85rem; }}
+.explainer-card .icon {{ font-size: 1.3rem; margin-right: 0.4rem; }}
+.explainer-card h4 {{ font-size: 0.85rem; margin-bottom: 0.35rem; display: flex; align-items: center; }}
+.explainer-card p {{ font-size: 0.85rem; color: var(--muted); margin: 0; }}
+.step-list {{ display: grid; gap: 0.5rem; margin: 0.75rem 0 0; counter-reset: step; list-style: none; padding-left: 0; }}
+.step-list li {{ display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.9rem; }}
+.step-list li::before {{ counter-increment: step; content: counter(step);
+  flex-shrink: 0; width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  background: var(--accent); color: white; font-size: 0.75rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; }}
+.confidence-plain {{ display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.15rem; }}
+.jargon {{ border-bottom: 1px dotted var(--muted); cursor: help; }}
 @media print {{
   body {{ padding: 1rem; font-size: 11pt; }}
-  h2 {{ page-break-before: auto; }}
   .card {{ break-inside: avoid; }}
 }}
 </style>
@@ -132,45 +182,6 @@ def _section_metadata(meta: dict) -> str:
 <tr><th>Generated</th><td>{_e(meta.get('generated_at'))}</td></tr>
 <tr><th>Methodology</th><td>v{_e(meta.get('methodology_version'))}</td></tr>
 </table>
-</div>"""
-
-
-def _section_quick_overview(overview: dict) -> str:
-    bullets = overview.get("bullet_points", [])
-    bullet_items = "".join(f"<li>{_e(item)}</li>" for item in bullets)
-
-    metrics_html = ""
-    for metric in overview.get("metrics", []):
-        metrics_html += f"""<div class=\"metric\">
-<div class=\"metric-label\">{_e(metric.get('label'))}</div>
-<div class=\"metric-value\">{_e(metric.get('value', 0))}</div>
-<div class=\"metric-detail\">{_e(metric.get('detail'))}</div>
-</div>"""
-
-    bars_html = ""
-    for item in overview.get("confidence_breakdown", []):
-        label = _e(item.get("label"))
-        count = item.get("count", 0)
-        percent = float(item.get("percent", 0) or 0)
-        bars_html += f"""<div class=\"bar-row\">
-<div><strong>{label}</strong></div>
-<div class=\"bar-track\"><div class=\"bar-fill {label.lower()}\" style=\"width: {max(0, min(percent, 100))}%\"></div></div>
-<div class=\"muted\">{count} / {percent:.1f}%</div>
-</div>"""
-
-    flags = "".join(f"<li>{_e(flag)}</li>" for flag in overview.get("priority_flags", []))
-
-    return f"""
-<h2>At a Glance</h2>
-<div class=\"card\">
-<p><strong>{_e(overview.get('headline', 'Summary'))}</strong></p>
-<div class=\"overview-grid\">{metrics_html}</div>
-<h3>Key Takeaways</h3>
-<ul class=\"bullet-panel\">{bullet_items}</ul>
-<h3>Confidence Split</h3>
-<div class=\"bar-chart\">{bars_html}</div>
-<h3>Review Priority</h3>
-<ul class=\"bullet-panel flags\">{flags}</ul>
 </div>"""
 
 
@@ -197,32 +208,6 @@ def _section_scope(scope: dict) -> str:
 <p><strong>Platforms:</strong> {platforms or 'None'}</p>
 {window_str}
 <div class="disclaimer">{_e(scope.get('public_source_statement', ''))}</div>"""
-
-
-def _section_summary(summary: dict) -> str:
-    bands = summary.get("correlation_bands", {})
-    cats = summary.get("insight_categories", {})
-    cat_rows = "".join(f"<li>{_e(k)}: {v}</li>" for k, v in cats.items())
-    takeaway_rows = "".join(f"<li>{_e(item)}</li>" for item in summary.get("key_takeaways", []))
-
-    return f"""
-<h2>Executive Summary</h2>
-<div class="card">
-<table>
-<tr><th>Accounts collected</th><td>{summary.get('total_accounts_collected', 0)}</td>
-<th>Platforms</th><td>{summary.get('total_platforms', 0)}</td></tr>
-<tr><th>Correlations</th><td>{summary.get('total_correlations', 0)}</td>
-<th>Sources</th><td>{summary.get('total_sources', 0)}</td></tr>
-<tr><th>High-confidence</th><td>{bands.get('High', 0)}</td>
-<th>Medium</th><td>{bands.get('Medium', 0)}</td></tr>
-<tr><th>Low-confidence</th><td>{bands.get('Low', 0)}</td>
-<th>Insights</th><td>{summary.get('total_insights', 0)}</td></tr>
-</table>
-</div>
-<h3>Plain-Language Summary</h3>
-<ul class="bullet-panel">{takeaway_rows}</ul>
-<h3>Insights by Category</h3>
-<ul>{cat_rows}</ul>"""
 
 
 def _section_accounts(section: dict) -> str:
@@ -283,7 +268,8 @@ def _section_correlations(correlations: list) -> str:
 ↔ {_e(b.get('platform'))}/{_e(b.get('username'))} ({_e(b.get('ref'))})</p>
 <p><span class="badge {badge_cls}">{_e(band)}</span>
  Confidence: {c.get('confidence_pct', 0):.1f}% |
- Evidence: {_e(c.get('evidence_type'))}</p>
+ Evidence: {_e(c.get('evidence_type'))}
+ <span class="confidence-plain">{_e(_plain_confidence(band))}</span></p>
 <p class="muted">{_e(c.get('conclusion'))}</p>
 </div>"""
 
@@ -341,12 +327,13 @@ def _section_confidence(confidence: dict) -> str:
     bands = confidence.get("band_definitions", {})
     band_rows = "".join(
         f"<tr><td><span class='badge badge-{_e(k.lower())}'>{_e(k)}</span></td>"
-        f"<td>{_e(v)}</td></tr>"
+        f"<td>{_e(v)}<span class='confidence-plain'>{_e(_plain_confidence(k))}</span></td></tr>"
         for k, v in bands.items()
     )
 
     return f"""
 <h2>Confidence Framework</h2>
+<p class="muted">In plain terms: "High" means we're pretty sure, "Medium" means it's a good guess, and "Low" means treat it as an unverified tip.</p>
 <table>
 <tr><th>Band</th><th>Meaning</th></tr>
 {band_rows}
