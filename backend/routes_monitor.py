@@ -524,6 +524,52 @@ def update_alert(
         conn.close()
 
 
+@router.get("/alerts/dashboard")
+def dashboard_alerts(
+    limit: int = Query(default=15, ge=1, le=50),
+    current_user: dict = Depends(get_current_user),
+):
+    """Recent alerts across all cases with case titles and event diff data."""
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT a.*,
+                   c.title AS case_title,
+                   me.previous_json,
+                   me.current_json,
+                   me.event_type,
+                   me.source AS event_source
+            FROM alerts a
+            JOIN cases c ON c.id = a.case_id
+            LEFT JOIN monitor_events me ON me.id = a.monitor_event_id
+            WHERE a.investigator_id = %s
+            ORDER BY
+                CASE a.priority
+                    WHEN 'critical' THEN 0
+                    WHEN 'high' THEN 1
+                    WHEN 'normal' THEN 2
+                    WHEN 'low' THEN 3
+                END,
+                a.created_at DESC
+            LIMIT %s
+            """,
+            (current_user["id"], limit),
+        )
+        alerts = [dict(r) for r in cur.fetchall()]
+
+        cur.execute(
+            "SELECT count(*) AS unread FROM alerts WHERE investigator_id = %s AND status = 'unread'",
+            (current_user["id"],),
+        )
+        unread = cur.fetchone()["unread"]
+
+        return {"alerts": alerts, "unread": unread}
+    finally:
+        conn.close()
+
+
 @router.post("/alerts/mark-all-read")
 def mark_all_read(
     case_id: Optional[int] = Query(default=None),

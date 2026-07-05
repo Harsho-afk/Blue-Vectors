@@ -2,8 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   Bell,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Eye,
   EyeOff,
@@ -715,6 +718,9 @@ function EventsDialog({
 // ── Event Row ──
 
 function EventRow({ event }: { event: MonitorEvent }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasDiff = event.previous_json && event.current_json
+
   const typeConfig: Record<string, { icon: typeof Activity; color: string }> = {
     profile_changed: { icon: RefreshCw, color: 'text-blue-500' },
     new_posts: { icon: Activity, color: 'text-green-500' },
@@ -741,44 +747,267 @@ function EventRow({ event }: { event: MonitorEvent }) {
   }
 
   return (
-    <div className='flex items-start gap-3 rounded-lg border p-3'>
-      <div className={`mt-0.5 ${config.color}`}>
-        <Icon className='size-4' />
-      </div>
-      <div className='min-w-0 flex-1'>
-        <div className='flex items-center gap-2'>
-          <span className='text-sm font-medium'>{event.title}</span>
-          <Badge
-            variant='outline'
-            className={`text-[10px] ${priorityBadge[event.priority] || ''}`}
-          >
-            {event.priority}
-          </Badge>
+    <div className='rounded-lg border'>
+      <div
+        className={`flex items-start gap-3 p-3 ${hasDiff ? 'cursor-pointer' : ''}`}
+        onClick={() => hasDiff && setExpanded(!expanded)}
+      >
+        <div className={`mt-0.5 ${config.color}`}>
+          <Icon className='size-4' />
         </div>
-        <div className='mt-0.5 flex items-center gap-2 text-xs text-muted-foreground'>
-          <span>{event.source}</span>
-          <span>·</span>
-          <span>{timeAgo(event.observed_at)}</span>
-          {event.confidence && (
-            <>
-              <span>·</span>
-              <span>Confidence: {event.confidence}</span>
-            </>
+        <div className='min-w-0 flex-1'>
+          <div className='flex items-center gap-2'>
+            <span className='text-sm font-medium'>{event.title}</span>
+            <Badge
+              variant='outline'
+              className={`text-[10px] ${priorityBadge[event.priority] || ''}`}
+            >
+              {event.priority}
+            </Badge>
+          </div>
+          <div className='mt-0.5 flex items-center gap-2 text-xs text-muted-foreground'>
+            <span>{event.source}</span>
+            <span>·</span>
+            <span>{timeAgo(event.observed_at)}</span>
+            {event.confidence && (
+              <>
+                <span>·</span>
+                <span>Confidence: {event.confidence}</span>
+              </>
+            )}
+          </div>
+          {event.source_url && (
+            <a
+              href={event.source_url}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='mt-1 block truncate text-xs text-blue-500 hover:underline'
+              onClick={(e) => e.stopPropagation()}
+            >
+              {event.source_url}
+            </a>
           )}
         </div>
-        {event.source_url && (
-          <a
-            href={event.source_url}
-            target='_blank'
-            rel='noopener noreferrer'
-            className='mt-1 block truncate text-xs text-blue-500 hover:underline'
-          >
-            {event.source_url}
-          </a>
+        {hasDiff && (
+          <div className='mt-0.5 text-muted-foreground'>
+            {expanded ? (
+              <ChevronUp className='size-4' />
+            ) : (
+              <ChevronDown className='size-4' />
+            )}
+          </div>
         )}
+      </div>
+
+      {expanded && hasDiff && (
+        <ChangeDiff
+          eventType={event.event_type}
+          previous={event.previous_json!}
+          current={event.current_json!}
+        />
+      )}
+    </div>
+  )
+}
+
+function ChangeDiff({
+  eventType,
+  previous,
+  current,
+}: {
+  eventType: string
+  previous: Record<string, unknown>
+  current: Record<string, unknown>
+}) {
+  if (eventType === 'profile_changed') {
+    const fields = Object.keys(previous)
+    return (
+      <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+        <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+          Profile Changes
+        </p>
+        <div className='space-y-2'>
+          {fields.map((field) => {
+            const prev = previous[field] as
+              | { previous?: unknown; current?: unknown }
+              | unknown
+            const curr = current[field] as
+              | { previous?: unknown; current?: unknown }
+              | unknown
+            const oldVal =
+              prev && typeof prev === 'object' && 'previous' in prev
+                ? String(prev.previous ?? '—')
+                : String(prev ?? '—')
+            const newVal =
+              curr && typeof curr === 'object' && 'current' in curr
+                ? String(curr.current ?? '—')
+                : String(curr ?? '—')
+            return (
+              <DiffRow
+                key={field}
+                label={field.replace(/_/g, ' ')}
+                oldVal={oldVal}
+                newVal={newVal}
+              />
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  if (eventType === 'network_changed') {
+    const allKeys = new Set([...Object.keys(previous), ...Object.keys(current)])
+    return (
+      <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+        <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+          Network Changes
+        </p>
+        <div className='space-y-2'>
+          {[...allKeys].map((key) => (
+            <DiffRow
+              key={key}
+              label={key.replace(/_/g, ' ')}
+              oldVal={String(previous[key] ?? '—')}
+              newVal={String(current[key] ?? '—')}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (eventType === 'new_posts') {
+    const oldCount = previous.post_count
+    const newCount = current.post_count
+    const newIds = (current.new_ids as string[]) || []
+    return (
+      <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+        <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+          New Activity
+        </p>
+        <DiffRow
+          label='Post count'
+          oldVal={String(oldCount ?? '—')}
+          newVal={String(newCount ?? '—')}
+        />
+        {newIds.length > 0 && (
+          <p className='mt-1.5 text-xs text-muted-foreground'>
+            {newIds.length} new post{newIds.length > 1 ? 's' : ''} detected
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  if (eventType === 'correlation_drift') {
+    return (
+      <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+        <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+          Correlation Change
+        </p>
+        <DiffRow
+          label='Confidence'
+          oldVal={`${previous.confidence ?? '—'}%`}
+          newVal={`${current.confidence ?? '—'}%`}
+        />
+        {current.band != null && (
+          <p className='mt-1.5 text-xs text-muted-foreground'>
+            Band: {String(current.band)}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  if (eventType === 'breach_detected') {
+    const oldBreaches = (previous.breaches as string[]) || []
+    const newBreaches = (current.new_breaches as string[]) || []
+    return (
+      <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+        <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+          Breach Detection
+        </p>
+        <DiffRow
+          label='Known breaches'
+          oldVal={String(oldBreaches.length)}
+          newVal={String(current.total ?? oldBreaches.length + newBreaches.length)}
+        />
+        {newBreaches.length > 0 && (
+          <div className='mt-2 space-y-1'>
+            <p className='text-xs font-medium text-red-600'>
+              New breaches found:
+            </p>
+            {newBreaches.map((b, i) => (
+              <span
+                key={i}
+                className='mr-1.5 inline-block rounded bg-red-500/10 px-1.5 py-0.5 text-xs text-red-600'
+              >
+                {b}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const allKeys = new Set([...Object.keys(previous), ...Object.keys(current)])
+  return (
+    <div className='border-t bg-muted/30 px-3 pb-3 pt-2'>
+      <p className='mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground'>
+        Change Details
+      </p>
+      <div className='space-y-2'>
+        {[...allKeys].map((key) => (
+          <DiffRow
+            key={key}
+            label={key.replace(/_/g, ' ')}
+            oldVal={formatDiffValue(previous[key])}
+            newVal={formatDiffValue(current[key])}
+          />
+        ))}
       </div>
     </div>
   )
+}
+
+function DiffRow({
+  label,
+  oldVal,
+  newVal,
+}: {
+  label: string
+  oldVal: string
+  newVal: string
+}) {
+  const changed = oldVal !== newVal
+  return (
+    <div className='flex items-center gap-2 text-xs'>
+      <span className='w-24 shrink-0 truncate font-medium capitalize text-muted-foreground'>
+        {label}
+      </span>
+      <span
+        className={`truncate rounded px-1.5 py-0.5 ${changed ? 'bg-red-500/10 text-red-600 line-through' : 'text-muted-foreground'}`}
+      >
+        {oldVal}
+      </span>
+      {changed && (
+        <>
+          <ArrowRight className='size-3 shrink-0 text-muted-foreground' />
+          <span className='truncate rounded bg-green-500/10 px-1.5 py-0.5 text-green-600'>
+            {newVal}
+          </span>
+        </>
+      )}
+    </div>
+  )
+}
+
+function formatDiffValue(val: unknown): string {
+  if (val === null || val === undefined) return '—'
+  if (typeof val === 'object') return JSON.stringify(val)
+  return String(val)
 }
 
 // ── Mini Stat ──

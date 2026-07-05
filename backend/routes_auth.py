@@ -156,3 +156,44 @@ def me(current_user: dict = Depends(get_current_user)):
     Returns 401 if no valid cookie present.
     """
     return current_user
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str
+
+
+@router.put("/profile")
+def update_profile(body: UpdateProfileRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Update the full name (investigator name) of the currently logged-in user.
+    """
+    name_clean = body.full_name.strip()
+    if len(name_clean) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name must be at least 2 characters",
+        )
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE users
+            SET full_name = %s
+            WHERE id = %s
+            RETURNING id, email, full_name, role
+            """,
+            (name_clean, current_user["id"]),
+        )
+        conn.commit()
+        updated = cur.fetchone()
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        updated_user = dict(updated)
+    finally:
+        conn.close()
+    return updated_user
+

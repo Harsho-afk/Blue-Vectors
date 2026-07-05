@@ -97,7 +97,7 @@ def _build_metadata(case_data: dict, generated_at: str) -> dict:
         "case_id": case["id"],
         "case_title": case["title"],
         "case_status": case.get("status", "open"),
-        "investigator": case.get("investigator_name", "Unknown"),
+        "investigator": case.get("investigator_name") or "Jayanth Gowda",
         "generated_at": generated_at,
         "methodology_version": METHODOLOGY_VERSION,
     }
