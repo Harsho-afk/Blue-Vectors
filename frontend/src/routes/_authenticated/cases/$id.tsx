@@ -1,4 +1,4 @@
-import { type ComponentType, useCallback, useEffect, useState } from 'react'
+import { type ComponentType, useCallback, useEffect, useRef, useState } from 'react'
 import {
   AccountCommentSearch,
   CommentAuthor,
@@ -347,6 +347,18 @@ function CaseDetail() {
       .finally(() => setIsLoading(false))
   }, [id])
 
+  // Throttled refetch used while an investigation is streaming per-post
+  // progress — avoids hammering the API on every single post/comment event
+  // while still showing new posts within ~1.5s of landing in the DB.
+  const progressFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fetchCaseThrottled = useCallback(() => {
+    if (progressFetchTimer.current) return
+    progressFetchTimer.current = setTimeout(() => {
+      progressFetchTimer.current = null
+      fetchCase()
+    }, 1500)
+  }, [fetchCase])
+
   const fetchResults = useCallback(() => {
     fetch(`${API}/api/cases/${id}/results`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : Promise.resolve({ results: [] })))
@@ -402,6 +414,59 @@ function CaseDetail() {
           .catch(() => res.statusText)
         throw new Error(err)
       }
+
+      // The backend now streams progress as SSE (same shape as /run's
+      // collect/collect_post/collect_comments events) instead of blocking
+      // until the whole account is done. Parse the stream and refetch the
+      // case as soon as data lands — for Instagram that's per post, so
+      // posts/comments show up within seconds instead of after minutes.
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let sawError: string | null = null
+
+      const handleChunk = (chunk: string) => {
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          let event: {
+            step?: string
+            status?: string
+            error?: string
+            message?: string
+          }
+          try {
+            event = JSON.parse(line.slice(6))
+          } catch {
+            continue
+          }
+          if (event.status === 'error') {
+            sawError = event.error || event.message || 'Collection failed'
+            continue
+          }
+          if (
+            event.step === 'collect_post' ||
+            event.step === 'collect_comments' ||
+            (event.step === 'collect' && event.status === 'running')
+          ) {
+            // New post/comments already saved to the DB, or the profile
+            // itself just landed — refresh the case view now rather than
+            // waiting for the whole collection to finish.
+            fetchCase()
+          }
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() || ''
+        for (const part of parts) handleChunk(part)
+      }
+      if (buffer.trim()) handleChunk(buffer)
+
+      if (sawError) throw new Error(sawError)
     }
 
     try {
@@ -930,6 +995,7 @@ function CaseDetail() {
           <InvestigationRunner
             caseId={id}
             hasIdentifiers={identifiers.length > 0}
+            onProgress={fetchCaseThrottled}
             onComplete={() => {
               setCorrelationResults([])
               setInsights([])

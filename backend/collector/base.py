@@ -13,7 +13,14 @@ load_dotenv()
 
 
 # PostgreSQL storage helper
-def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
+def save_account_profile(profile: AccountProfile, conn, case_id: int) -> int:
+    """
+    Upsert just the account row (no posts). Split out from save_to_db so
+    streaming collectors (e.g. Instagram) can persist the account/profile
+    the moment it's fetched — before any posts exist — so the frontend has
+    something to show right away instead of waiting for the whole
+    collection to finish.
+    """
     cur = conn.cursor()
 
     created_at_dt = (
@@ -67,28 +74,6 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
         ),
     )
     account_id: int = cur.fetchone()["id"]
-
-    for post in profile.posts:
-        post_dt = datetime.fromtimestamp(post.timestamp, tz=timezone.utc)
-        cur.execute(
-            """
-            INSERT INTO posts
-            (account_id, external_id, text, timestamp, metadata)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (account_id, external_id)
-            DO UPDATE SET
-                text     = EXCLUDED.text,
-                metadata = EXCLUDED.metadata
-            """,
-            (
-                account_id,
-                post.external_id,
-                post.text,
-                post_dt,
-                json.dumps(post.metadata),
-            ),
-        )
-
     conn.commit()
     log.info(
         "DB: saved account_id=%d (%s/%s) under case_id=%d",
@@ -97,6 +82,81 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
         profile.username,
         case_id,
     )
+    return account_id
+
+
+def save_post(account_id: int, post, conn) -> None:
+    """Upsert a single post. Used by streaming collectors so each post can
+    be persisted (and therefore visible to the frontend) as soon as it's
+    collected, instead of waiting for the entire timeline."""
+    cur = conn.cursor()
+    post_dt = datetime.fromtimestamp(post.timestamp, tz=timezone.utc)
+    cur.execute(
+        """
+        INSERT INTO posts
+        (account_id, external_id, text, timestamp, metadata)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (account_id, external_id)
+        DO UPDATE SET
+            text     = EXCLUDED.text,
+            metadata = EXCLUDED.metadata
+        """,
+        (
+            account_id,
+            post.external_id,
+            post.text,
+            post_dt,
+            json.dumps(post.metadata),
+        ),
+    )
+    conn.commit()
+
+
+def update_post_comments(account_id: int, external_id: str, comments: list, conn) -> None:
+    """
+    Overwrite a post's comment list (+ comments_fetched/comments_pending)
+    once a background thread has finished paging past the inline cap.
+    No-op if the post isn't found (e.g. collection failed before it saved).
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT metadata FROM posts WHERE account_id = %s AND external_id = %s",
+        (account_id, external_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        log.warning(
+            "DB: update_post_comments — no post found for account_id=%d external_id=%s",
+            account_id, external_id,
+        )
+        return
+
+    meta = row["metadata"] or {}
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+
+    meta["comments"] = comments
+    meta["comments_fetched"] = len(comments)
+    meta["comments_pending"] = False
+
+    cur.execute(
+        "UPDATE posts SET metadata = %s WHERE account_id = %s AND external_id = %s",
+        (json.dumps(meta), account_id, external_id),
+    )
+    conn.commit()
+    log.info(
+        "DB: updated comments for account_id=%d external_id=%s — %d comments (background fetch complete)",
+        account_id, external_id, len(comments),
+    )
+
+
+def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
+    """Save a fully-collected AccountProfile (account + all its posts) in
+    one shot. For streaming collection, prefer save_account_profile() +
+    save_post() per post instead."""
+    account_id = save_account_profile(profile, conn, case_id)
+    for post in profile.posts:
+        save_post(account_id, post, conn)
     return account_id
 
 
@@ -190,4 +250,48 @@ async def collect_twitter(
     collector = TwitterCollector()
     return await collector.collect(
         username, limit=limit, include_social_graph=include_social_graph
+    )
+
+
+async def collect_instagram_streaming(
+    username: str,
+    limit: int = 100,
+    include_social_graph: bool = True,
+    follower_limit: int = 0,
+    following_limit: int = 0,
+    fetch_comments: bool = True,
+    inline_comment_cap: int = 50,
+    on_profile=None,
+    on_post=None,
+    on_extra_comments=None,
+) -> AccountProfile:
+    """
+    Async wrapper around InstagramCollector.collect_streaming(), offloaded
+    to a thread the same way collect_async() does for Instagram (instagrapi
+    is synchronous/requests-based).
+
+    Unlike collect_async("instagram", ...), this streams: on_profile fires
+    once the account is fetched, on_post fires per post (with up to
+    inline_comment_cap comments attached), and on_extra_comments fires later
+    — possibly after this coroutine has already returned — for any post
+    whose full comment list took longer than the cap to fetch. This lets a
+    caller persist/display the profile and each post immediately instead of
+    waiting for the entire account (and every comment) to finish.
+    """
+    loop = asyncio.get_event_loop()
+    collector = InstagramCollector()
+    return await loop.run_in_executor(
+        None,
+        lambda: collector.collect_streaming(
+            username,
+            limit=limit,
+            include_social_graph=include_social_graph,
+            follower_limit=follower_limit,
+            following_limit=following_limit,
+            fetch_comments=fetch_comments,
+            inline_comment_cap=inline_comment_cap,
+            on_profile=on_profile,
+            on_post=on_post,
+            on_extra_comments=on_extra_comments,
+        ),
     )

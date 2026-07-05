@@ -55,6 +55,13 @@ interface StepEvent {
   usernames?: number
   emails?: number
   phones?: number
+  post_index?: number
+  post_type?: string
+  comments_inline?: number
+  comment_count?: number
+  comments_pending?: boolean
+  external_id?: string
+  collectible_platforms?: string[]
 }
 
 type Phase = 'discovery' | 'collection' | 'breach' | 'phone' | 'dorking' | 'correlation' | 'insights' | 'intelligence'
@@ -72,6 +79,13 @@ interface Props {
   caseId: string
   hasIdentifiers: boolean
   onComplete: () => void
+  /**
+   * Fired whenever new data has actually landed in the DB mid-run (a post
+   * was collected, or a background comment fetch finished) — not just when
+   * the whole investigation finishes. Lets the case page refetch and show
+   * posts as they arrive instead of waiting for everything to complete.
+   */
+  onProgress?: () => void
 }
 
 // ── Phase metadata ──────────────────────────────────────────────────────────
@@ -97,7 +111,9 @@ function capitalize(s: string) {
 
 function stepKey(event: StepEvent): string {
   const { step, seed, platform, username } = event
-  if (step === 'collect') return `collect-${platform}-${username || seed}`
+  if (step === 'collect' || step === 'collect_post' || step === 'collect_comments') {
+    return `collect-${platform}-${username || seed}`
+  }
   if (step === 'maigret') return `maigret-${seed}`
   if (step === 'breach') return `breach-${seed}`
   if (step === 'phone') return `phone-${seed}`
@@ -106,7 +122,7 @@ function stepKey(event: StepEvent): string {
 
 function stepToPhase(step: string): Phase {
   if (step === 'maigret') return 'discovery'
-  if (step === 'collect') return 'collection'
+  if (step === 'collect' || step === 'collect_post' || step === 'collect_comments') return 'collection'
   if (step === 'breach') return 'breach'
   if (step === 'phone') return 'phone'
   if (step === 'dorking') return 'dorking'
@@ -119,7 +135,9 @@ function stepToPhase(step: string): Phase {
 function stepLabel(event: StepEvent): string {
   const { step, seed, platform, username } = event
   if (step === 'maigret') return `Search platforms for "${seed}"`
-  if (step === 'collect') return `Collect ${capitalize(platform || '?')} — ${username || seed}`
+  if (step === 'collect' || step === 'collect_post' || step === 'collect_comments') {
+    return `Collect ${capitalize(platform || '?')} — ${username || seed}`
+  }
   if (step === 'breach') return `Check breaches for ${seed}`
   if (step === 'phone') return `Lookup phone ${seed}`
   if (step === 'dorking') return 'Web expansion survey (dorking)'
@@ -130,8 +148,20 @@ function stepLabel(event: StepEvent): string {
 }
 
 function stepDetail(event: StepEvent): string | undefined {
-  if (event.step === 'maigret' && event.status === 'done') return `Found on ${event.found ?? 0} platforms`
+  if (event.step === 'maigret' && event.status === 'done') {
+    const base = `Found on ${event.found ?? 0} platforms`
+    if (event.collectible_platforms && event.collectible_platforms.length > 0) {
+      return `${base} — collect manually: ${event.collectible_platforms.join(', ')}`
+    }
+    return base
+  }
   if (event.step === 'collect' && event.status === 'done') return `${event.posts ?? 0} posts collected`
+  if (event.step === 'collect_post') {
+    const parts = [`${event.post_index ?? 0} post${event.post_index === 1 ? '' : 's'} collected so far`]
+    if (event.comments_pending) parts.push('fetching remaining comments in background')
+    return parts.join(' — ')
+  }
+  if (event.step === 'collect_comments') return event.message
   if (event.step === 'breach' && event.status === 'done') return `${event.breaches ?? 0} breach(es) found`
   if (event.step === 'correlate' && event.status === 'done') return `${event.pairs ?? 0} pair(s) analyzed`
   if (event.step === 'insights' && event.status === 'done') return `${event.count ?? 0} insight(s) generated`
@@ -176,7 +206,7 @@ function parseSSEChunk(chunk: string): StepEvent[] {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function InvestigationRunner({ caseId, hasIdentifiers, onComplete }: Props) {
+export function InvestigationRunner({ caseId, hasIdentifiers, onComplete, onProgress }: Props) {
   const [isRunning, setIsRunning] = useState(false)
   const [isDone, setIsDone] = useState(false)
   const [steps, setSteps] = useState<StepEntry[]>([])
@@ -198,10 +228,31 @@ export function InvestigationRunner({ caseId, hasIdentifiers, onComplete }: Prop
       return
     }
 
+    // Per-post / per-comment progress: a post (or a background comment
+    // fetch) just landed in the DB — let the case page refetch live
+    // instead of waiting for onComplete at the very end.
+    if (event.step === 'collect_post' || event.step === 'collect_comments') {
+      onProgress?.()
+    }
+
     const id = stepKey(event)
     const phase = stepToPhase(event.step)
     const label = stepLabel(event)
     const detail = stepDetail(event)
+
+    // collect_post/collect_comments always mean "still going" for the
+    // parent collect row — only the actual 'collect' event's own status
+    // should mark that row done/error/skipped.
+    const rowStatus =
+      event.step === 'collect_post' || event.step === 'collect_comments'
+        ? 'running'
+        : event.status === 'error'
+          ? 'error'
+          : event.status === 'skipped'
+            ? 'skipped'
+            : event.status === 'done'
+              ? 'done'
+              : 'running'
 
     setSteps((prev) => {
       const idx = prev.findIndex((s) => s.id === id)
@@ -209,7 +260,7 @@ export function InvestigationRunner({ caseId, hasIdentifiers, onComplete }: Prop
         id,
         phase,
         label,
-        status: event.status === 'error' ? 'error' : event.status === 'skipped' ? 'skipped' : event.status === 'done' ? 'done' : 'running',
+        status: rowStatus,
         detail,
         error: event.error,
       }
@@ -220,7 +271,7 @@ export function InvestigationRunner({ caseId, hasIdentifiers, onComplete }: Prop
       }
       return [...prev, entry]
     })
-  }, [])
+  }, [onProgress])
 
   const runInvestigation = useCallback(async () => {
     setIsRunning(true)

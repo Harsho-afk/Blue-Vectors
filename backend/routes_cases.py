@@ -9,11 +9,13 @@ POST   /api/cases/{case_id}/collect       collect data for a case identifier
 """
 
 import json
-from typing import Optional, Literal
+import asyncio
+from typing import Optional, Literal, AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from auth import get_current_user, get_db_conn
-from collector.base import collect_async, save_to_db
+from collect_stream import collect_one_platform
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -677,6 +679,53 @@ def get_intelligence(case_id: int, current_user: dict = Depends(get_current_user
     return {"report": r}
 
 
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+async def _run_single_collect(
+    case_id: int,
+    platform: str,
+    username: str,
+    limit: int,
+    include_social_graph: bool,
+    queue: "asyncio.Queue[Optional[dict]]",
+) -> None:
+    """Producer: runs one collect_one_platform() call, pushing SSE-ready
+    dict events onto the queue as they happen (per-post for Instagram,
+    one final event for everything else), then a None sentinel."""
+    emit = queue.put
+    try:
+        await collect_one_platform(
+            case_id, platform, username, emit, limit=limit,
+            include_social_graph=include_social_graph,
+        )
+    finally:
+        await queue.put(None)
+
+
+async def _stream_single_collect(
+    case_id: int, platform: str, username: str, limit: int, include_social_graph: bool
+) -> AsyncGenerator[str, None]:
+    queue: "asyncio.Queue[Optional[dict]]" = asyncio.Queue()
+    producer_task = asyncio.create_task(
+        _run_single_collect(case_id, platform, username, limit, include_social_graph, queue)
+    )
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield _sse(item)
+    finally:
+        if not producer_task.done():
+            producer_task.cancel()
+            try:
+                await producer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 @router.post("/{case_id}/collect")
 async def collect_for_case(
     case_id: int,
@@ -685,11 +734,19 @@ async def collect_for_case(
 ):
     """
     Collect data for an identifier and save it to the case.
-    Calls the Layer 1 collector and persists the account + posts to the DB.
 
-    follower_limit / following_limit / comment_limit default to 0
-    ("unlimited") and are currently only meaningful for Instagram; other
-    platforms accept and ignore them.
+    Streams progress as Server-Sent Events (same event shape as
+    /api/cases/{id}/run's collect step) instead of blocking until the
+    whole account is done. For Instagram this means each post (with up to
+    50 comments) is saved and emitted the moment it's ready, rather than
+    the frontend waiting minutes for one big response at the end. Other
+    platforms still emit a single "done" event once their collection
+    finishes, since they don't have a per-post streaming path.
+
+    follower_limit / following_limit / comment_limit are accepted for
+    backwards compatibility with existing callers but are currently always
+    treated as "unlimited" (0) for Instagram, matching /run's behavior;
+    other platforms accept and ignore them.
     """
     conn = get_db_conn()
     try:
@@ -697,32 +754,14 @@ async def collect_for_case(
     finally:
         conn.close()
 
-    try:
-        profile = await collect_async(
-            body.platform,
-            body.username,
-            limit=body.limit,
-            include_social_graph=body.include_social_graph,
-            follower_limit=body.follower_limit,
-            following_limit=body.following_limit,
-            fetch_comments=body.fetch_comments,
-            comment_limit=body.comment_limit,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Collection failed: {e}")
-
-    conn = get_db_conn()
-    try:
-        account_id = save_to_db(profile, conn, case_id=case_id)
-    finally:
-        conn.close()
-
-    return {
-        "account_id": account_id,
-        "platform": profile.platform,
-        "username": profile.username,
-        "display_name": profile.display_name,
-        "posts_collected": len(profile.posts),
-    }
+    return StreamingResponse(
+        _stream_single_collect(
+            case_id, body.platform, body.username,
+            limit=body.limit, include_social_graph=body.include_social_graph,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

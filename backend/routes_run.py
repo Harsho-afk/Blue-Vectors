@@ -3,17 +3,24 @@ ARIA -- One-click investigation runner
 
 POST /api/cases/{case_id}/run  -> SSE stream of progress events
 
-Orchestrates: Maigret -> deep collectors -> breach -> phone -> correlation -> insights
+Orchestrates: Maigret -> deep collectors (platform_hint only) -> breach -> phone -> correlation -> insights
 Each step streams progress via Server-Sent Events so the frontend can show live updates.
 
 PARALLEL EXECUTION MODEL
 ------------------------
-- All seed collectors (username -> Maigret + deep-collect, email -> breach,
-  phone -> phone OSINT) run CONCURRENTLY via asyncio.gather. Each still
-  streams its own progress events; events from different tasks interleave
-  on the SSE stream as they complete, multiplexed through an asyncio.Queue.
-- Deep-collection of multiple platforms discovered for a single username
-  (e.g. Maigret finds both github + reddit) also runs concurrently.
+- All seed collectors (username -> Maigret [+ deep-collect only if a
+  platform_hint was set on the identifier], email -> breach, phone -> phone
+  OSINT) run CONCURRENTLY via asyncio.gather. Each still streams its own
+  progress events; events from different tasks interleave on the SSE
+  stream as they complete, multiplexed through an asyncio.Queue.
+- A username identifier with NO platform_hint stops at Maigret. Maigret is
+  a broad, shallow 500+ site presence check and its "found" results are
+  leads, not confirmed accounts — many sites false-positive on common
+  usernames. ARIA does NOT automatically deep-collect any platform Maigret
+  flags; the platforms it found are surfaced in the "collectible_platforms"
+  field of the maigret SSE event for the person to review and collect from
+  explicitly (via the per-identifier /collect endpoint or by setting a
+  platform_hint), rather than being deep-collected sight-unseen.
 - Correlation and Insights are independent of each other (insights functions
   only read accounts/posts/osint_lookups, never linkage_results) so they run
   CONCURRENTLY too, each offloaded to a worker thread since both are
@@ -32,8 +39,9 @@ from fastapi.responses import StreamingResponse
 
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
-from collector.base import collect_async, save_to_db, SUPPORTED_PLATFORMS
+from collector.base import SUPPORTED_PLATFORMS
 from collector.phone import PhoneCollector
+from collect_stream import collect_one_platform
 from correlator import correlate_case
 from insights.orchestrator import run_all as run_insights
 
@@ -129,65 +137,19 @@ def _find_collectible_platforms(maigret_result: dict) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-async def _collect_one_platform(
-    case_id: int, platform: str, username: str, emit
-) -> int:
-    await emit(
-        {
-            "step": "collect",
-            "status": "running",
-            "platform": platform,
-            "username": username,
-        }
-    )
-    try:
-        profile = await collect_async(
-            platform,
-            username,
-            follower_limit=0,
-            following_limit=0,
-            fetch_comments=True,
-            comment_limit=0,
-        )
-        conn = get_db_conn()
-        try:
-            save_to_db(profile, conn, case_id)
-        finally:
-            conn.close()
-        await emit(
-            {
-                "step": "collect",
-                "status": "done",
-                "platform": platform,
-                "username": username,
-                "posts": len(profile.posts),
-                "display_name": profile.display_name,
-            }
-        )
-        return 1
-    except Exception as e:
-        log.warning("Collection failed for %s/%s: %s", platform, username, e)
-        await emit(
-            {
-                "step": "collect",
-                "status": "error",
-                "platform": platform,
-                "username": username,
-                "error": str(e),
-            }
-        )
-        return 0
-
-
 async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
     """Handle one username identifier: direct collect if platform_hint known,
-    otherwise Maigret discovery followed by concurrent deep-collection of
-    every platform found that ARIA has a collector for."""
+    otherwise Maigret discovery ONLY. Maigret is a broad, shallow, 500+
+    site presence-check — its "found" results are informational leads, not
+    confirmed accounts (many sites false-positive on common usernames), so
+    ARIA does NOT auto deep-collect anything it finds. Deep collection for
+    a discovered platform is a separate, explicit action (via the
+    per-identifier /collect endpoint) once a person reviews the leads."""
     username = ident["value"]
     platform_hint = ident.get("platform_hint")
 
     if platform_hint and platform_hint in SUPPORTED_PLATFORMS:
-        return await _collect_one_platform(case_id, platform_hint, username, emit)
+        return await collect_one_platform(case_id, platform_hint, username, emit)
 
     await emit(
         {
@@ -208,6 +170,7 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
 
         total_found = maigret_result.get("total_found", 0)
         lead_summary = maigret_result.get("lead_summary", {})
+        collectible = _find_collectible_platforms(maigret_result)
         await emit(
             {
                 "step": "maigret",
@@ -215,29 +178,25 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
                 "seed": username,
                 "found": total_found,
                 "lead_summary": lead_summary,
-                "message": f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, {lead_summary.get('medium', 0)} medium leads)",
+                "collectible_platforms": collectible,
+                "message": (
+                    f"Found on {total_found} platforms ({lead_summary.get('high', 0)} strong, "
+                    f"{lead_summary.get('medium', 0)} medium leads)"
+                    + (
+                        f" — review and collect manually: {', '.join(collectible)}"
+                        if collectible
+                        else ""
+                    )
+                ),
             }
         )
 
-        collectible = _find_collectible_platforms(maigret_result)
-        if not collectible:
-            return 0
-
-        # Deep-collect every discovered platform concurrently.
-        results = await asyncio.gather(
-            *[
-                _collect_one_platform(case_id, platform, username, emit)
-                for platform in collectible
-            ],
-            return_exceptions=True,
-        )
-        collected = 0
-        for r in results:
-            if isinstance(r, Exception):
-                log.error("Deep-collect task errored for seed '%s': %s", username, r)
-            else:
-                collected += r
-        return collected
+        # Intentionally stop here. Maigret only confirms presence/absence
+        # heuristically — it is NOT a deep collector, and auto-triggering
+        # e.g. a Twitter/Instagram/etc. deep-collect for every platform it
+        # flags leads to false-positive collections. The person reviews the
+        # leads and kicks off deep collection explicitly per platform.
+        return 0
 
     except Exception as e:
         log.error("Maigret failed for '%s': %s", username, e)
@@ -355,7 +314,7 @@ async def _process_profile_url_seed(case_id: int, ident: dict, emit) -> int:
             "message": f"Collecting from {platform}/{username} (parsed from URL)",
         }
     )
-    return await _collect_one_platform(case_id, platform, username, emit)
+    return await collect_one_platform(case_id, platform, username, emit)
 
 
 # ─────────────────────────────────────────────────────────────────────────
