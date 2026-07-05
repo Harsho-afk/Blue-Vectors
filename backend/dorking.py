@@ -99,14 +99,31 @@ def _templates_for_email(email: str) -> list[dict]:
 
 
 def _templates_for_phone(phone: str) -> list[dict]:
-    digits_only = re.sub(r'\D', '', phone)
-    return [
+    digits_only = re.sub(r"\D", "", phone)
+
+    # Remove leading country code (1–3 digits) if present
+    local_digits = digits_only
+    if phone.strip().startswith("+"):
+        local_digits = re.sub(r"^\d{1,2}", "", digits_only, count=1)
+
+    templates = [
         {"query": f'"{phone}"', "purpose": "Exact phone number mentions"},
         {"query": f'"{digits_only}"', "purpose": "Digits-only format mentions"},
         {"query": f'"{phone}" profile OR contact', "purpose": "Profile or contact pages"},
         {"query": f'"{phone}" whatsapp OR telegram', "purpose": "Messenger references"},
         {"query": f'"{digits_only}" site:facebook.com OR site:linkedin.com', "purpose": "Social media references"},
     ]
+
+    # Add searches without country code if different
+    if local_digits != digits_only:
+        templates.extend([
+            {"query": f'"{local_digits}"', "purpose": "Digits-only without country code"},
+            {"query": f'"{local_digits}" profile OR contact', "purpose": "Profile or contact pages (no country code)"},
+            {"query": f'"{local_digits}" whatsapp OR telegram', "purpose": "Messenger references (no country code)"},
+            {"query": f'"{local_digits}" site:facebook.com OR site:linkedin.com', "purpose": "Social media references (no country code)"},
+        ])
+
+    return templates
 
 
 def _templates_for_profile_url(url: str) -> list[dict]:

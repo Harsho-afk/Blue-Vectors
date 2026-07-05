@@ -450,15 +450,19 @@ function EnrollDialog({
   const [error, setError] = useState('')
 
   const submit = () => {
-    if (!selectedId || !reason) {
-      setError('Please select a target and provide a reason')
+    if (!selectedId) {
+      setError('Please select a target to monitor')
+      return
+    }
+    if (!reason || reason.trim().length < 3) {
+      setError('Please provide a monitoring reason (at least 3 characters)')
       return
     }
     setSubmitting(true)
     setError('')
 
     const body: Record<string, unknown> = {
-      reason,
+      reason: reason.trim(),
       interval_minutes: parseInt(interval),
       expires_in_days: parseInt(expiry),
     }
@@ -480,7 +484,16 @@ function EnrollDialog({
         setSelectedId('')
         setReason('')
       })
-      .catch((e) => setError(e.detail || 'Failed to create monitor target'))
+      .catch((e) => {
+        // FastAPI 422 returns { detail: [...array of validation errors] }
+        // Other errors return { detail: "string" }
+        if (Array.isArray(e?.detail)) {
+          const msgs = e.detail.map((err: any) => err.msg || JSON.stringify(err)).join('; ')
+          setError(msgs)
+        } else {
+          setError(e?.detail || 'Failed to create monitor target')
+        }
+      })
       .finally(() => setSubmitting(false))
   }
 

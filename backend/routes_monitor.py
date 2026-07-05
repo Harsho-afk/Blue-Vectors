@@ -23,8 +23,10 @@ log = logging.getLogger("aria.monitor")
 class MonitorTargetCreate(BaseModel):
     account_id: Optional[int] = None
     identifier_id: Optional[int] = None
-    reason: str = Field(..., min_length=5, max_length=500)
-    permitted_sources: List[str] = ["platform_recollect", "maigret", "dorking", "breach"]
+    reason: str = Field(..., min_length=3, max_length=500)
+    permitted_sources: List[str] = Field(
+        default_factory=lambda: ["platform_recollect", "maigret", "dorking", "breach"]
+    )
     interval_minutes: int = Field(default=60, ge=5, le=1440)
     expires_in_days: int = Field(default=30, ge=1, le=90)
 

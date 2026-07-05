@@ -16,6 +16,8 @@ pycountry
 socid-extractor
 colorama
 six
+alive-progress
+html5lib
 rapidfuzz>=3.0
 sentence-transformers>=2.2
 Pillow>=9.0
