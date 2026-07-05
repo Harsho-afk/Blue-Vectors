@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { NavigationProgress } from '@/components/navigation-progress'
 import { GeneralError } from '@/features/errors/general-error'
 import { NotFoundError } from '@/features/errors/not-found-error'
+import { GlobalBackground } from '@/components/global-background'
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
@@ -14,6 +15,7 @@ export const Route = createRootRouteWithContext<{
     return (
       <>
         <NavigationProgress />
+        <GlobalBackground />
         <Outlet />
         <Toaster duration={5000} />
         {import.meta.env.MODE === 'development' && (

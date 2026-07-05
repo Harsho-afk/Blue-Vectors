@@ -16,19 +16,7 @@
   }
 
   body {
-    @apply min-h-svh w-full bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar;
-    background:
-      radial-gradient(
-        circle at 12% 8%,
-        rgba(251, 146, 60, 0.18),
-        transparent 24rem
-      ),
-      radial-gradient(
-        circle at 92% 14%,
-        rgba(253, 186, 116, 0.16),
-        transparent 24rem
-      ),
-      var(--background);
+    @apply min-h-svh w-full bg-transparent text-foreground has-[div[data-variant='inset']]:bg-sidebar;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -43,6 +31,7 @@
   }
 
   @media screen and (max-width: 767px) {
+
     input,
     select,
     textarea {
@@ -118,12 +107,31 @@
   &::-webkit-scrollbar {
     display: none;
   }
+
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
 
 @utility faded-bottom {
-  @apply after:pointer-events-none after:absolute after:inset-s-0 after:bottom-0 after:hidden after:h-32 after:w-full after:rounded-b-2xl after:bg-[linear-gradient(180deg,transparent_10%,var(--background)_70%)] md:after:block;
+  position: relative;
+  &::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    display: none;
+    height: 8rem;
+    width: 100%;
+    border-bottom-left-radius: var(--radius);
+    border-bottom-right-radius: var(--radius);
+    background: linear-gradient(180deg, transparent 10%, var(--background) 70%);
+  }
+  @media (min-width: 768px) {
+    &::after {
+      display: block;
+    }
+  }
 }
 
 .CollapsibleContent {
@@ -142,6 +150,7 @@
   from {
     height: 0;
   }
+
   to {
     height: var(--radix-collapsible-content-height);
   }
@@ -151,6 +160,7 @@
   from {
     height: var(--radix-collapsible-content-height);
   }
+
   to {
     height: 0;
   }
