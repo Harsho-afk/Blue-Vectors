@@ -517,6 +517,28 @@ def delete_identifier(
         )
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="Identifier not found")
+
+        # Fetch identifier details before deletion so we can clean up collected data
+        cur.execute(
+            "SELECT identifier_type, value, platform_hint FROM case_identifiers WHERE id = %s AND case_id = %s",
+            (identifier_id, case_id),
+        )
+        ident_row = cur.fetchone()
+
+        # Delete OSINT lookups collected for this identifier's value
+        if ident_row:
+            cur.execute(
+                "DELETE FROM osint_lookups WHERE case_id = %s AND input_value = %s",
+                (case_id, ident_row["value"]),
+            )
+            # Delete accounts collected via this identifier (matched by platform hint + username)
+            # Only delete accounts whose username matches the identifier value and platform matches hint
+            if ident_row["platform_hint"]:
+                cur.execute(
+                    "DELETE FROM accounts WHERE case_id = %s AND platform = %s AND username = %s",
+                    (case_id, ident_row["platform_hint"], ident_row["value"]),
+                )
+
         cur.execute(
             "DELETE FROM case_identifiers WHERE id = %s AND case_id = %s",
             (identifier_id, case_id),

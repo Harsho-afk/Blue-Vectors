@@ -12,6 +12,7 @@ import {
   Info,
   Maximize2,
   Minimize2,
+  Scan,
   X,
   ZoomIn,
   ZoomOut,
@@ -675,7 +676,7 @@ export function InvestigationGraph({ caseId, apiBase }: InvestigationGraphProps)
             <ZoomOut className='h-4 w-4' />
           </Button>
           <Button size='icon' variant='secondary' className='h-8 w-8' onClick={handleFit} title='Fit to view'>
-            <Maximize2 className='h-4 w-4' />
+            <Scan className='h-4 w-4' />
           </Button>
           <Button
             size='icon'

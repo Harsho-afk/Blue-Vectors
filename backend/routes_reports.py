@@ -10,13 +10,14 @@ GET    /api/cases/{case_id}/reports/readiness    Check generation readiness
 
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.responses import HTMLResponse
 from auth import get_current_user, get_db_conn
 from routes_cases import check_case_ownership
 from reporting.builder import generate_report, compute_content_hash, check_readiness
 from reporting.collector import load_case_data
 from reporting.render_html import render_report_html
+from reporting.render_pdf import render_report_pdf
 
 log = logging.getLogger("aria.routes_reports")
 
@@ -233,3 +234,56 @@ def get_report_html(
 
     html_content = render_report_html(report_json)
     return HTMLResponse(content=html_content)
+
+
+@router.get("/{report_id}/pdf")
+def get_report_pdf(
+    case_id: int, report_id: int, current_user: dict = Depends(get_current_user)
+):
+    """Generate the report as a PDF download."""
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT report_json, status
+            FROM socmint_reports
+            WHERE id = %s AND case_id = %s
+            """,
+            (report_id, case_id),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if row["status"] != "ready":
+        raise HTTPException(status_code=422, detail="Report is not ready")
+
+    report_json = row["report_json"]
+    if isinstance(report_json, str):
+        report_json = json.loads(report_json)
+
+    pdf_bytes = render_report_pdf(report_json)
+
+    case_title = report_json.get("report_metadata", {}).get("case_title", "case")
+    # Sanitize case title to create a valid safe filename
+    import re
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", case_title).strip()
+    safe_title = safe_title.replace(" ", "-")
+    if not safe_title:
+        safe_title = "case"
+    filename = f"{safe_title}-report.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+

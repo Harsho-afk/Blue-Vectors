@@ -8,7 +8,14 @@ bcrypt
 python-jose[cryptography]
 psycopg2-binary
 email-validator
-maigret
+aiohttp
+aiohttp-socks
+aiodns
+jinja2
+pycountry
+socid-extractor
+colorama
+six
 rapidfuzz>=3.0
 sentence-transformers>=2.2
 Pillow>=9.0
@@ -21,3 +28,5 @@ phonenumbers
 telethon
 duckduckgo-search
 google-genai>=1.0
+reportlab==4.2.2
+

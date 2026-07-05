@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   Clock,
+  Download,
   ExternalLink,
   FileText,
   Loader2,
@@ -192,6 +193,13 @@ export function ReportsPanel({ caseId }: Props) {
     )
   }
 
+  const downloadPdf = (reportId: number) => {
+    window.open(
+      `${API}/api/cases/${caseId}/reports/${reportId}/pdf`,
+      '_blank'
+    )
+  }
+
   return (
     <div className='space-y-4'>
       {/* Readiness check */}
@@ -275,8 +283,17 @@ export function ReportsPanel({ caseId }: Props) {
                         variant='ghost'
                         size='sm'
                         onClick={() => openHtml(r.id)}
+                        title='View HTML report'
                       >
                         <ExternalLink className='size-3.5' />
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        onClick={() => downloadPdf(r.id)}
+                        title='Download PDF report'
+                      >
+                        <Download className='size-3.5' />
                       </Button>
                     </>
                   )}
@@ -302,6 +319,7 @@ export function ReportsPanel({ caseId }: Props) {
           reportId={activeReportId!}
           caseId={caseId}
           onOpenHtml={() => openHtml(activeReportId!)}
+          onDownloadPdf={() => downloadPdf(activeReportId!)}
         />
       )}
     </div>
@@ -396,11 +414,13 @@ function ReadinessItem({
 function ReportPreview({
   report,
   onOpenHtml,
+  onDownloadPdf,
 }: {
   report: ReportJson
   reportId: number
   caseId: string
   onOpenHtml: () => void
+  onDownloadPdf: () => void
 }) {
   const meta = report.report_metadata
   const summary = report.executive_summary
@@ -423,10 +443,16 @@ function ReportPreview({
                 {new Date(meta.generated_at).toLocaleString()}
               </CardDescription>
             </div>
-            <Button variant='outline' size='sm' onClick={onOpenHtml}>
-              <ExternalLink className='mr-2 size-3.5' />
-              Full Report
-            </Button>
+            <div className='flex items-center gap-2'>
+              <Button variant='outline' size='sm' onClick={onOpenHtml}>
+                <ExternalLink className='mr-2 size-3.5' />
+                Full Report
+              </Button>
+              <Button variant='outline' size='sm' onClick={onDownloadPdf}>
+                <Download className='mr-2 size-3.5' />
+                Download PDF
+              </Button>
+            </div>
           </div>
         </CardHeader>
       </Card>

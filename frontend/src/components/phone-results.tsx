@@ -257,9 +257,11 @@ export function PhoneResults({ lookup }: Props) {
               </Avatar>
               <div>
                 <p className='text-sm font-medium'>
-                  {String(r.telegram_display_name ?? 'Unknown')}
+                  {r.telegram_display_name
+                    ? String(r.telegram_display_name)
+                    : <span className='text-muted-foreground italic'>Name not available</span>}
                 </p>
-                {!!r.telegram_username && (
+                {r.telegram_username ? (
                   <a
                     href={`https://t.me/${r.telegram_username}`}
                     target='_blank'
@@ -268,6 +270,8 @@ export function PhoneResults({ lookup }: Props) {
                   >
                     @{String(r.telegram_username)} <ExternalLink className='h-2.5 w-2.5' />
                   </a>
+                ) : (
+                  <p className='text-xs text-muted-foreground italic'>Username not available</p>
                 )}
               </div>
             </div>

@@ -311,13 +311,23 @@ async def _lookup_telegram(phone: str) -> dict:
         except Exception:
             pass
 
-        # Build display name — exclude our placeholder contact name
-        parts = [user.first_name or "", user.last_name or ""]
-        display_name = " ".join(p for p in parts if p).strip() or None
+        # Build display name — exclude our placeholder contact name.
+        # Telegram may echo back the first_name/last_name we supplied when the
+        # user has no real profile name set, so filter those sentinel values out.
+        _PLACEHOLDER_FIRST = "ARIA"
+        _PLACEHOLDER_LAST  = "Lookup"
+        raw_first = user.first_name or ""
+        raw_last  = user.last_name  or ""
+        is_placeholder = (raw_first == _PLACEHOLDER_FIRST and raw_last == _PLACEHOLDER_LAST)
+        if is_placeholder:
+            display_name = None
+        else:
+            parts = [raw_first, raw_last]
+            display_name = " ".join(p for p in parts if p).strip() or None
 
         result = {
             "telegram_display_name":     display_name,
-            "telegram_username":         user.username,
+            "telegram_username":         user.username or None,  # None if not set
             "telegram_user_id":          user.id,
             "telegram_profile_photo_url": photo_url,
         }

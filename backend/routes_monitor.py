@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -43,9 +43,10 @@ class AlertUpdate(BaseModel):
 # ── Monitor Target Endpoints ─────────────────────────────────────────────────
 
 @router.post("/cases/{case_id}/monitor-targets", status_code=status.HTTP_201_CREATED)
-def create_monitor_target(
+async def create_monitor_target(
     case_id: int,
     body: MonitorTargetCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     if not body.account_id and not body.identifier_id:
@@ -111,8 +112,12 @@ def create_monitor_target(
 
         log.info("Monitor target %d created for case %d by user %d", row["id"], case_id, current_user["id"])
 
+        # Capture baseline immediately (don't wait for scheduler tick)
+        target_id = row["id"]
+        background_tasks.add_task(_run_baseline_now, target_id)
+
         return {
-            "id": row["id"],
+            "id": target_id,
             "case_id": case_id,
             "account_id": body.account_id,
             "identifier_id": body.identifier_id,
@@ -125,6 +130,16 @@ def create_monitor_target(
         }
     finally:
         conn.close()
+
+
+async def _run_baseline_now(target_id: int):
+    """Fire baseline capture immediately after target creation."""
+    from monitor_engine import _check_target
+    try:
+        await _check_target(target_id)
+        log.info("Immediate baseline captured for target %d", target_id)
+    except Exception:
+        log.exception("Immediate baseline capture failed for target %d", target_id)
 
 
 @router.get("/cases/{case_id}/monitor-targets")
@@ -306,8 +321,9 @@ def manual_check(
 
 
 @router.post("/monitor-targets/{target_id}/reset-baseline")
-def reset_baseline(
+async def reset_baseline(
     target_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """Delete all snapshots and events, reset to pending_baseline so the next
@@ -347,8 +363,12 @@ def reset_baseline(
             "Baseline reset for target %d: %d snapshots, %d events deleted",
             target_id, snaps_deleted, events_deleted,
         )
+
+        # Immediately re-capture baseline
+        background_tasks.add_task(_run_baseline_now, target_id)
+
         return {
-            "message": "Baseline reset — next check will capture fresh baseline",
+            "message": "Baseline reset — capturing fresh baseline now",
             "snapshots_deleted": snaps_deleted,
             "events_deleted": events_deleted,
         }
