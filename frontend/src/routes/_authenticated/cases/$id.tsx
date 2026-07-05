@@ -237,6 +237,85 @@ function padId(id: number) {
   return `CASE-${String(id).padStart(4, '0')}`
 }
 
+function InlineCaseTitle({
+  title,
+  caseId,
+  onRenamed,
+}: {
+  title: string
+  caseId: number
+  onRenamed: (newTitle: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(title)
+  const [saving, setSaving] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(title)
+      setTimeout(() => inputRef.current?.select(), 0)
+    }
+  }, [editing, title])
+
+  const save = async () => {
+    const trimmed = draft.trim()
+    if (!trimmed || trimmed === title) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    try {
+      const res = await fetch(`${API}/api/cases/${caseId}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ title: trimmed }),
+      })
+      if (res.ok) {
+        onRenamed(trimmed)
+      }
+    } finally {
+      setSaving(false)
+      setEditing(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className='flex items-center gap-2'>
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') save()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          onBlur={save}
+          disabled={saving}
+          className='h-9 flex-1 rounded-md border bg-background px-2 text-2xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring'
+        />
+        {saving && <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />}
+      </div>
+    )
+  }
+
+  return (
+    <div className='group flex items-center gap-2'>
+      <h1 className='truncate text-2xl font-bold tracking-tight'>
+        {title}
+      </h1>
+      <button
+        onClick={() => setEditing(true)}
+        className='opacity-0 transition-opacity group-hover:opacity-100'
+      >
+        <Pencil className='h-3.5 w-3.5 text-muted-foreground hover:text-foreground' />
+      </button>
+    </div>
+  )
+}
+
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
@@ -885,9 +964,11 @@ function CaseDetail() {
 
           <div className='flex items-start justify-between'>
             <div className='min-w-0 flex-1'>
-              <h1 className='truncate text-2xl font-bold tracking-tight'>
-                {caseData.title}
-              </h1>
+              <InlineCaseTitle
+                title={caseData.title}
+                caseId={caseData.id}
+                onRenamed={(t) => setCaseData((prev) => prev ? { ...prev, title: t } : prev)}
+              />
               <div className='mt-1 flex items-center gap-2 text-sm text-muted-foreground'>
                 <code className='text-xs'>{padId(caseData.id)}</code>
                 <Separator orientation='vertical' className='h-4' />

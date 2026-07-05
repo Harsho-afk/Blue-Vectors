@@ -402,6 +402,30 @@ def delete_case(case_id: int, current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
+class CaseRename(BaseModel):
+    title: str
+
+
+@router.patch("/{case_id}/title")
+def rename_case(
+    case_id: int,
+    body: CaseRename,
+    current_user: dict = Depends(get_current_user),
+):
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    conn = get_db_conn()
+    try:
+        check_case_ownership(conn, case_id, current_user["id"])
+        cur = conn.cursor()
+        cur.execute("UPDATE cases SET title = %s WHERE id = %s", (title, case_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"title": title}
+
+
 class CaseStatusUpdate(BaseModel):
     status: Literal["open", "closed"]
 
