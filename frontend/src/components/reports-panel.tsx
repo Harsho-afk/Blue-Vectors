@@ -433,22 +433,41 @@ function ReportPreview({
   return (
     <div className='space-y-4'>
       {/* Header */}
-      <Card>
-        <CardHeader>
-          <div className='flex items-center justify-between'>
-            <div>
-              <CardTitle>Case Documentation</CardTitle>
-              <CardDescription>
-                {meta.case_title} — Generated{' '}
-                {new Date(meta.generated_at).toLocaleString()}
-              </CardDescription>
+      <Card className="overflow-hidden border-orange-500/30 bg-gradient-to-r from-orange-500/10 via-transparent to-transparent">
+        <CardHeader className="py-4">
+          <div className='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>
+            <div className='flex items-center gap-3'>
+              <img
+                src='/images/aria-logo.png'
+                alt='ARIA Logo'
+                className='h-12 w-12 shrink-0 object-contain filter dark:drop-shadow-[0_0_8px_rgba(249,115,22,0.3)]'
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-bold uppercase tracking-widest text-orange-500">
+                    ARIA SOCMINT
+                  </span>
+                  <Badge variant="outline" className="border-orange-500/40 text-orange-500 text-[0.65rem] font-mono uppercase">
+                    v{meta.methodology_version}
+                  </Badge>
+                </div>
+                <CardTitle className="text-xl font-extrabold tracking-tight">
+                  {meta.case_title}
+                </CardTitle>
+                <CardDescription className="font-mono text-xs">
+                  Generated: {new Date(meta.generated_at).toLocaleString()} | Investigator: {meta.investigator}
+                </CardDescription>
+              </div>
             </div>
-            <div className='flex items-center gap-2'>
-              <Button variant='outline' size='sm' onClick={onOpenHtml}>
+            <div className='flex items-center gap-2 self-end sm:self-center'>
+              <Button variant='outline' size='sm' onClick={onOpenHtml} className="border-orange-500/30 hover:bg-orange-500/10 text-orange-500 hover:text-orange-600">
                 <ExternalLink className='mr-2 size-3.5' />
                 Full Report
               </Button>
-              <Button variant='outline' size='sm' onClick={onDownloadPdf}>
+              <Button variant='outline' size='sm' onClick={onDownloadPdf} className="border-orange-500/30 hover:bg-orange-500/10 text-orange-500 hover:text-orange-600">
                 <Download className='mr-2 size-3.5' />
                 Download PDF
               </Button>

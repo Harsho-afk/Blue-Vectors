@@ -14,17 +14,18 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     KeepTogether,
+    Image,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # Define design system colors (Light mode print theme)
-PRIMARY_COLOR = colors.HexColor("#1e3a8a")    # Deep Indigo
-SECONDARY_COLOR = colors.HexColor("#3b82f6")  # Blue Accent
+PRIMARY_COLOR = colors.HexColor("#ea580c")    # Vibrant Dark Orange
+SECONDARY_COLOR = colors.HexColor("#f97316")  # Orange Accent
 TEXT_COLOR = colors.HexColor("#1f2937")       # Charcoal
 MUTED_COLOR = colors.HexColor("#4b5563")      # Gray
 BORDER_COLOR = colors.HexColor("#e5e7eb")     # Light Gray
-BG_LIGHT = colors.HexColor("#f9fafb")         # Light Background Card
+BG_LIGHT = colors.HexColor("#fffaf7")         # Light Peach Background Card
 WHITE = colors.HexColor("#ffffff")
 
 # Helper for cell colors depending on confidence bands
@@ -101,6 +102,26 @@ def render_report_pdf(report: dict) -> bytes:
         spaceAfter=15,
     )
 
+    logo_style = ParagraphStyle(
+        "BrandLogo",
+        parent=base_styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=24,
+        leading=28,
+        textColor=PRIMARY_COLOR,
+        alignment=1,
+    )
+
+    logo_sub_style = ParagraphStyle(
+        "BrandLogoSub",
+        parent=base_styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=7,
+        leading=9,
+        textColor=SECONDARY_COLOR,
+        alignment=1,
+    )
+
     h1_style = ParagraphStyle(
         "SectionHeading",
         parent=base_styles["Heading2"],
@@ -172,14 +193,68 @@ def render_report_pdf(report: dict) -> bytes:
         return t
 
     # ── 1. Header & Metadata ──
-    elements.append(Paragraph("ARIA SOCMINT Investigation Report", title_style))
-    elements.append(
+    import os
+    logo_path = os.path.join(os.path.dirname(__file__), "aria-logo.png")
+    if os.path.exists(logo_path):
+        logo_img = Image(logo_path, width=42, height=42)
+        logo_img.hAlign = 'CENTER'
+        logo_block = Table(
+            [[logo_img], [Spacer(1, 3)], [Paragraph("SOCMINT", logo_sub_style)]],
+            colWidths=[90]
+        )
+        logo_block.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+    else:
+        logo_block = Table(
+            [[Paragraph("ARIA", logo_style)], [Spacer(1, 1)], [Paragraph("SOCMINT", logo_sub_style)]],
+            colWidths=[90]
+        )
+        logo_block.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+
+    header_title_block = [
+        Paragraph("Investigation Report", title_style),
         Paragraph(
             f"Case: {_e(meta.get('case_title', 'Unknown'))} | "
             f"Generated: {_e(meta.get('generated_at', ''))}",
             subtitle_style,
         )
+    ]
+
+    header_table = Table([[logo_block, header_title_block]], colWidths=[90, 414])
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LINEBEFORE", (1, 0), (1, -1), 2, PRIMARY_COLOR),
+                ("PADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (0, -1), 12),
+                ("LEFTPADDING", (1, 0), (1, -1), 12),
+            ]
+        )
     )
+    elements.append(header_table)
+    elements.append(Spacer(1, 10))
     elements.append(draw_hr())
     elements.append(Spacer(1, 10))
 

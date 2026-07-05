@@ -4,6 +4,8 @@ All user-supplied content is escaped to prevent XSS.
 """
 
 import html
+import base64
+import os
 from datetime import datetime
 
 
@@ -86,8 +88,21 @@ def _section_summary(report: dict) -> str:
 <ul>{cat_rows}</ul>"""
 
 
+def get_logo_base64() -> str:
+    logo_path = os.path.join(os.path.dirname(__file__), "aria-logo.png")
+    if os.path.exists(logo_path):
+        try:
+            with open(logo_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("utf-8")
+                return f"data:image/png;base64,{encoded}"
+        except Exception:
+            pass
+    return "/images/aria-logo.png"
+
+
 def _html_head(meta: dict) -> str:
     title = _e(meta.get("case_title", "SOCMINT Report"))
+    logo_src = get_logo_base64()
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -97,13 +112,16 @@ def _html_head(meta: dict) -> str:
 <style>
 :root {{
   --bg: #ffffff; --fg: #1f2937; --muted: #4b5563;
-  --primary: #1e3a8a; --accent: #3b82f6; --border: #e5e7eb;
-  --card-bg: #f9fafb; --high: #16a34a; --medium: #d97706; --low: #6b7280;
+  --primary: #ea580c; --accent: #f97316; --border: #e5e7eb;
+  --card-bg: #fffaf7; --high: #16a34a; --medium: #d97706; --low: #6b7280;
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{ font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
   color: var(--fg); line-height: 1.6; padding: 2rem; max-width: 1000px; margin: 0 auto; }}
-h1 {{ font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--primary); }}
+.header-container {{ display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--primary); }}
+.logo-container img {{ height: 52px; width: auto; max-width: 120px; object-fit: contain; }}
+.header-text h1 {{ font-size: 1.6rem; font-weight: 800; color: var(--primary); margin-bottom: 0.15rem; }}
+.header-text p {{ font-size: 0.85rem; color: var(--muted); }}
 h2 {{ font-size: 1.2rem; margin: 2rem 0 0.75rem; padding-bottom: 0.25rem;
   color: var(--primary); border-bottom: 2px solid var(--primary); }}
 h3 {{ font-size: 1rem; margin: 1rem 0 0.5rem; color: var(--accent); }}
@@ -165,8 +183,15 @@ li {{ margin: 0.25rem 0; }}
 </style>
 </head>
 <body>
-<h1>ARIA SOCMINT Investigation Report</h1>
-<p class="muted">Case: {title} | Generated: {_e(meta.get('generated_at', ''))}</p>
+<div class="header-container">
+  <div class="logo-container">
+    <img src="{logo_src}" alt="ARIA Logo" />
+  </div>
+  <div class="header-text">
+    <h1>ARIA SOCMINT Investigation Report</h1>
+    <p class="muted">Case: {title} | Generated: {_e(meta.get('generated_at', ''))}</p>
+  </div>
+</div>
 """
 
 
