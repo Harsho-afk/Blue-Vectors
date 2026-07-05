@@ -373,51 +373,44 @@ function CaseDetail() {
     setCollecting((prev) => ({ ...prev, [key]: true }))
     setError(null)
 
-    const isInstagram = platform === 'instagram'
+    const collectPlatform = async (platform: string, username: string) => {
+      const isInstagram = platform === 'instagram'
+      const res = await fetch(`${API}/api/cases/${id}/collect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          platform,
+          username,
+          include_social_graph: true,
+          ...(isInstagram && {
+            follower_limit: 0, // 0 = unlimited
+            following_limit: 0, // 0 = unlimited
+            fetch_comments: true,
+            comment_limit: 0, // 0 = unlimited
+          }),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
+        throw new Error(err)
+      }
+    }
 
     try {
       if (identifier.identifier_type === 'profile_url') {
         // Parse URL to extract platform + username, then collect
         const parsed = parseProfileUrl(identifier.value)
         if (!parsed) throw new Error('Could not parse platform/username from URL')
-        const res = await fetch(`${API}/api/cases/${id}/collect`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            platform: parsed.platform,
-            username: parsed.username,
-            include_social_graph: true,
-          }),
-        })
-        if (!res.ok) {
-          const err = await res
-            .json()
-            .then((d) => d.detail)
-            .catch(() => res.statusText)
-          throw new Error(err)
-        }
+        await collectPlatform(parsed.platform, parsed.username)
       } else {
         const platform = identifier.platform_hint || ''
         if (platform && platform !== 'none') {
           // Direct collection from known platform
-          const res = await fetch(`${API}/api/cases/${id}/collect`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              platform,
-              username: identifier.value,
-              include_social_graph: true,
-            }),
-          })
-          if (!res.ok) {
-            const err = await res
-              .json()
-              .then((d) => d.detail)
-              .catch(() => res.statusText)
-            throw new Error(err)
-          }
+          await collectPlatform(platform, identifier.value)
         } else {
           // No platform specified — run username search (Maigret discovery)
           const res = await fetch(
@@ -437,28 +430,6 @@ function CaseDetail() {
             throw new Error(err)
           }
         }
-      const res = await fetch(`${API}/api/cases/${id}/collect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          platform,
-          username: identifier.value,
-          include_social_graph: true,
-          ...(isInstagram && {
-            follower_limit: 0, // 0 = unlimited
-            following_limit: 0, // 0 = unlimited
-            fetch_comments: true,
-            comment_limit: 0, // 0 = unlimited
-          }),
-        }),
-      })
-      if (!res.ok) {
-        const err = await res
-          .json()
-          .then((d) => d.detail)
-          .catch(() => res.statusText)
-        throw new Error(err)
       }
       fetchCase()
     } catch (e) {
