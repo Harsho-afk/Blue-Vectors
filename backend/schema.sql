@@ -171,3 +171,117 @@ CREATE TABLE IF NOT EXISTS socmint_reports (
 
 CREATE INDEX IF NOT EXISTS socmint_reports_case_id_idx
 ON socmint_reports(case_id);
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- MONITORING / WATCHLIST SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- 11. monitor_targets — profiles placed under active monitoring
+CREATE TABLE IF NOT EXISTS monitor_targets (
+    id                SERIAL PRIMARY KEY,
+    case_id           INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    created_by        INTEGER NOT NULL REFERENCES users(id),
+    -- exactly one of these must be set
+    account_id        INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    identifier_id     INTEGER REFERENCES case_identifiers(id) ON DELETE CASCADE,
+    status            TEXT NOT NULL DEFAULT 'pending_baseline'
+                      CHECK (status IN (
+                          'pending_baseline', 'active', 'paused',
+                          'degraded', 'expired', 'revoked'
+                      )),
+    reason            TEXT NOT NULL,
+    -- what sources to check
+    permitted_sources JSONB NOT NULL DEFAULT '["platform_recollect", "maigret", "dorking", "breach"]',
+    interval_seconds  INTEGER NOT NULL DEFAULT 3600,
+    next_check_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_checked_at   TIMESTAMPTZ,
+    expires_at        TIMESTAMPTZ NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT monitor_targets_one_target
+        CHECK (
+            (account_id IS NOT NULL AND identifier_id IS NULL) OR
+            (account_id IS NULL AND identifier_id IS NOT NULL)
+        )
+);
+
+CREATE INDEX IF NOT EXISTS monitor_targets_case_id_idx
+ON monitor_targets(case_id);
+
+CREATE INDEX IF NOT EXISTS monitor_targets_next_check_idx
+ON monitor_targets(next_check_at)
+WHERE status IN ('active', 'pending_baseline');
+
+-- 12. monitor_snapshots — point-in-time state captures for diffing
+CREATE TABLE IF NOT EXISTS monitor_snapshots (
+    id            SERIAL PRIMARY KEY,
+    target_id     INTEGER NOT NULL REFERENCES monitor_targets(id) ON DELETE CASCADE,
+    source        TEXT NOT NULL,
+    snapshot_json JSONB NOT NULL,
+    content_hash  TEXT NOT NULL,
+    is_baseline   BOOLEAN NOT NULL DEFAULT false,
+    observed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS monitor_snapshots_target_id_idx
+ON monitor_snapshots(target_id);
+
+CREATE INDEX IF NOT EXISTS monitor_snapshots_baseline_idx
+ON monitor_snapshots(target_id, source)
+WHERE is_baseline = true;
+
+-- 13. monitor_events — detected changes between snapshots
+CREATE TABLE IF NOT EXISTS monitor_events (
+    id                SERIAL PRIMARY KEY,
+    target_id         INTEGER NOT NULL REFERENCES monitor_targets(id) ON DELETE CASCADE,
+    event_type        TEXT NOT NULL
+                      CHECK (event_type IN (
+                          'profile_changed', 'new_posts', 'network_changed',
+                          'account_discovered', 'account_disappeared',
+                          'breach_detected', 'correlation_drift',
+                          'new_web_mention', 'hard_link_found'
+                      )),
+    source            TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    previous_json     JSONB,
+    current_json      JSONB,
+    evidence_json     JSONB,
+    source_url        TEXT,
+    confidence        TEXT CHECK (confidence IN ('high', 'medium', 'low')),
+    priority          TEXT NOT NULL DEFAULT 'normal'
+                      CHECK (priority IN ('low', 'normal', 'high', 'critical')),
+    fingerprint       TEXT NOT NULL,
+    observed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS monitor_events_target_id_idx
+ON monitor_events(target_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS monitor_events_dedup_idx
+ON monitor_events(target_id, source, fingerprint);
+
+-- 14. alerts — investigator-facing notifications
+CREATE TABLE IF NOT EXISTS alerts (
+    id               SERIAL PRIMARY KEY,
+    case_id          INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    monitor_event_id INTEGER REFERENCES monitor_events(id) ON DELETE SET NULL,
+    investigator_id  INTEGER NOT NULL REFERENCES users(id),
+    status           TEXT NOT NULL DEFAULT 'unread'
+                     CHECK (status IN ('unread', 'read', 'acknowledged', 'dismissed')),
+    title            TEXT NOT NULL,
+    message          TEXT NOT NULL,
+    priority         TEXT NOT NULL DEFAULT 'normal'
+                     CHECK (priority IN ('low', 'normal', 'high', 'critical')),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    read_at          TIMESTAMPTZ,
+    acknowledged_at  TIMESTAMPTZ,
+    dismissed_at     TIMESTAMPTZ,
+    dismiss_reason   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS alerts_investigator_status_idx
+ON alerts(investigator_id, status);
+
+CREATE INDEX IF NOT EXISTS alerts_case_id_idx
+ON alerts(case_id);

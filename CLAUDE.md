@@ -1,511 +1,163 @@
 # CLAUDE.md
 
-# Social Media Intelligence & OSINT-Based Suspect Profiling System
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+# Project: ARIA — Social Media Intelligence & OSINT Platform
 
-This project is being developed as a hackathon submission.
+Hackathon submission. A lawful SOCMINT/OSINT platform that discovers, correlates, analyzes, and visualizes publicly available digital footprints across multiple online platforms. Investigators create cases, input identifiers, and ARIA discovers accounts, correlates identities with explainable confidence scores, and generates intelligence reports.
 
-The objective is to build a lawful, ethical, and technically sound SOCMINT (Social Media Intelligence) and OSINT (Open Source Intelligence) platform capable of discovering, correlating, analyzing, and visualizing publicly available digital footprints across multiple online platforms.
-
-The system must assist investigators in identifying relationships between online accounts while maintaining transparency, explainability, and ethical boundaries.
-
----
-
-# Commit Rules
+## Commit Rules
 
 Do not add any `Co-Authored-By` trailer to commit messages.
 
-# Claude's Role
+## Development Commands
+
+### Full stack (Docker)
+```bash
+docker compose up --build        # Start all services (postgres, redlib, wa-sidecar, backend, frontend)
+docker compose up --build -d     # Detached mode
+docker compose down              # Stop all
+```
+Services: postgres:5432, redlib:8080, wa-sidecar:3333, backend:8000, frontend:80
+
+### Backend only (local dev)
+```bash
+cd backend
+pip install -r requirements.txt
+# Also need: pip install torch --index-url https://download.pytorch.org/whl/cpu
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+```
+Requires `DATABASE_URL` env var pointing to a PostgreSQL instance with schema applied (`psql -d aria -f schema.sql`).
+
+### Frontend only (local dev)
+```bash
+cd frontend
+npm install
+npm run dev                      # Vite dev server on :5173
+npm run build                    # tsc + vite build
+npm run lint                     # ESLint
+npm run test                     # Vitest with Playwright browser (headless)
+npm run test:watch               # Watch mode
+npm run test:coverage            # Coverage report
+npm run test:browser:install     # Install Playwright Chromium (first time)
+```
+Set `VITE_API_URL=http://localhost:8000` for local backend.
+
+### Database
+```bash
+psql -d aria -f backend/schema.sql   # Initialize schema
+```
+Docker auto-applies schema via `docker-entrypoint-initdb.d`.
+
+## Architecture
+
+### Backend (FastAPI, Python 3.12)
+
+Single FastAPI app (`backend/app.py`) with routers:
+
+| Router | File | Purpose |
+|--------|------|---------|
+| Auth | `routes_auth.py` | Register, login, JWT via HttpOnly cookie (`aria_token`) |
+| Cases | `routes_cases.py` | CRUD cases + case_identifiers |
+| OSINT | `routes_osint.py` | Maigret enumeration, breach lookups, dorking |
+| Run | `routes_run.py` | One-click investigation runner (SSE streaming) |
+| Graph | `routes_graph.py` | Force-graph data for visualization |
+| Timeline | `routes_timeline.py` | Chronological activity feed |
+| Reports | `routes_reports.py` | SOCMINT report generation/retrieval |
+
+**Investigation pipeline** (`routes_run.py` — `POST /api/cases/{case_id}/run`):
+Seeds run concurrently → Maigret + deep-collect (per platform) + breach + phone OSINT → then correlation + insights run concurrently → then LLM analyst (depends on both). Progress streams via SSE.
+
+**Collectors** (`backend/collector/`):
+- `reddit.py` — Redlib scraping (self-hosted → public fallback) + Reddit JSON API
+- `twitter.py` — twikit library with browser cookies
+- `github.py` — GitHub REST API v3 (unauthenticated or with token)
+- `instagram.py` — instagrapi (mobile API)
+- `phone.py` — phonenumbers + Telegram + WhatsApp sidecar + DuckDuckGo + Twilio
+- `base.py` — `collect_async()` dispatcher, `save_to_db()` persists to accounts/posts tables
+
+**Correlation engine** (`backend/correlator.py`):
+Three-tiered scoring: Tier 1 hard links (bio cross-links, shared email/phone → floor 80%), Tier 2 username×distinctiveness, Tier 3 weighted signals (username 0.22, bio 0.16, profile_image 0.15, temporal 0.13, community 0.12, stylometry 0.12, geo 0.10). Outputs confidence 0-100 + SHAP-style breakdown.
+
+**Feature extractors** (`backend/features.py`):
+Username similarity (rapidfuzz), bio similarity (sentence-transformers all-MiniLM-L6-v2), profile image (CLIP cosine), temporal patterns (Jensen-Shannon divergence), community overlap (Jaccard), stylometry (char n-gram TF-IDF).
+
+**Insights** (`backend/insights/`):
+Pass 1 (parallel): cross_link, timezone, network_geo, pattern_of_life, coordination, risk, keywords.
+Pass 2 (sequential): consistency (depends on timezone output).
+Orchestrated by `insights/orchestrator.py`.
+
+**LLM Analyst** (`backend/llm/analyst.py`):
+Groq (llama-3.3-70b) primary, Gemini 2.0 Flash fallback. Generates structured intelligence briefing from insights + correlations.
+
+**Dorking** (`backend/dorking.py`):
+Deterministic query templates + LLM query planner → Serper.dev (Google search) → entity extraction + lead scoring.
+
+**Reporting** (`backend/reporting/`):
+Multi-section report builder: collector → references → confidence → limitations → render_html.
+
+### Frontend (React 19, TypeScript, Vite)
+
+Uses TanStack Router (file-based routes in `src/routes/`) + TanStack Query + Zustand + Tailwind CSS v4 + shadcn/ui components.
+
+**Route structure:**
+- `(auth)/` — sign-in, sign-up, forgot-password, OTP
+- `_authenticated/` — guarded by `AuthContext` (checks `aria_token` cookie)
+  - `cases/index` — case list
+  - `cases/$id` — case detail (accounts, identifiers, investigation runner, graph, timeline, reports)
+  - `investigate/index` — quick investigate page
+  - `settings/` — profile, account, appearance, notifications, display
+
+**Key patterns:**
+- API base URL from `VITE_API_URL` env var (`src/lib/aria-api.ts`)
+- Auth via HttpOnly cookie, context in `src/context/auth-context.tsx`
+- Path alias `@/` → `src/`
+- UI components in `src/components/ui/` (shadcn)
+- Feature components in `src/components/` (correlation-results, dorking-results, intelligence-briefing, investigation-runner, etc.)
 
-You are expected to function as:
+### Database (PostgreSQL 17)
 
-* Senior Software Architect
-* Senior Full Stack Engineer
-* Cybersecurity Engineer
-* OSINT Specialist
-* AI/ML Engineer
-* Database Designer
-* DevOps Engineer
-* Code Reviewer
-* Security Auditor
-* Technical Mentor
+Schema in `backend/schema.sql`. Key tables: users, cases, case_identifiers, osint_lookups (JSONB), accounts (with image_embedding JSONB for CLIP vectors), posts (with metadata JSONB), linkage_results (confidence + shap_json), insights, intelligence_reports, socmint_reports.
 
-Do not blindly agree with suggestions.
+All accounts are scoped to a case (`case_id` FK). Linkage results enforce `account_a_id < account_b_id` ordering.
 
-If a design decision is poor, explain why and propose a better alternative.
+### Docker Services
 
-Always optimize for:
+| Service | Image/Build | Port | Purpose |
+|---------|-------------|------|---------|
+| postgres | postgres:17 | 5432 | Database |
+| redlib | tagliasteel/redlib | 8080 | Reddit scraping proxy |
+| wa-sidecar | ./wa_sidecar | 3333 | WhatsApp Web.js bridge |
+| backend | ./backend | 8000 | FastAPI |
+| frontend | ./frontend | 80 | Nginx serving built React |
 
-* Feasibility
-* Maintainability
-* Scalability
-* Security
-* Hackathon Success
+## Critical Rules
 
----
+**MVP First.** Priority: Auth → Cases → OSINT Collection → Correlation → Dashboard → Graph → Reports → Advanced AI.
 
-# Critical Development Rules
+**Explainability.** Every correlation must show per-signal breakdown with confidence bands (Low/Medium/High). Never make absolute identity claims.
 
-## Rule 1: MVP First
+**Never assume data availability.** Platforms restrict access. Verify API availability, rate limits, ToS. If inaccessible legally, propose alternatives.
 
-Always prioritize a working MVP.
+**Prevent scope creep.** Before implementing: Is it required for demo? Can judges see it? Can it be completed in time?
 
-Avoid building advanced features before core functionality works.
+**Hackathon judging focus:** Innovation, technical depth, demonstration quality, practical relevance, UI/UX, scalability potential.
 
-Priority:
+## Environment Variables
 
-1. Authentication
-2. Case Management
-3. OSINT Collection
-4. Correlation Engine
-5. Dashboard
-6. Graph Visualization
-7. Reports
-8. Advanced AI Features
+Required in `.env` (loaded by backend and docker-compose):
+- `DATABASE_URL` — PostgreSQL connection string
+- `JWT_SECRET` — HMAC key for JWT tokens
+- `TWITTER_CT0`, `TWITTER_AUTH_TOKEN` — Twitter cookies
+- `INSTAGRAM_SESSION_ID`, `INSTAGRAM_USERNAME`
+- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION`
+- `SERPER_API_KEY` — Google search for dorking
+- `GROQ_API_KEY` — LLM (primary)
+- `GEMINI_API_KEY` — LLM (fallback)
+- `TWILIO_API_KEY`, `TWILIO_API_KEY_SECRET` — Phone lookup
 
----
+Optional: `GITHUB_TOKEN` (higher rate limits), `HIBP_API_KEY` (premium breach), `INSTAGRAM_CSRFTOKEN`, `INSTAGRAM_DS_USER_ID`, `INSTAGRAM_REQUEST_DELAY`, `INSTAGRAM_PROXY`.
 
-## Rule 2: Prevent Scope Creep
+## Auth Pattern
 
-Before implementing any feature, evaluate:
-
-* Is it required for the demo?
-* Can judges see it?
-* Can it be completed within hackathon time?
-
-If not, move it to future enhancements.
-
----
-
-## Rule 3: Never Assume Data Availability
-
-Many social platforms restrict scraping.
-
-Always verify:
-
-* API availability
-* Rate limits
-* Terms of service
-* Public accessibility
-
-If a platform is not accessible legally, propose alternatives.
-
----
-
-## Rule 4: Explainability First
-
-Every correlation must be explainable.
-
-Bad:
-
-"This account belongs to the suspect."
-
-Good:
-
-"Username similarity = 85%
-Bio similarity = 60%
-Shared links = 90%
-
-Overall confidence = 78%"
-
----
-
-## Rule 5: Confidence-Based Conclusions
-
-Never make absolute claims.
-
-Use:
-
-* Low Confidence
-* Medium Confidence
-* High Confidence
-
-Always provide supporting evidence.
-
----
-
-# Recommended Technology Stack
-
-## Frontend
-
-* React
-* TypeScript
-* Vite
-* Tailwind CSS
-* React Query
-* React Router
-
-## Backend
-
-* FastAPI
-* Python 3.12+
-
-## Database
-
-* PostgreSQL
-
-## Authentication
-
-* JWT
-* bcrypt password hashing
-
-## Cache
-
-* Redis
-
-## AI/NLP
-
-* Sentence Transformers
-* HuggingFace Transformers
-* spaCy
-* NLTK
-
-## Graph Analytics
-
-* NetworkX
-
-## Data Processing
-
-* Pandas
-* NumPy
-
-## Visualization
-
-* React Flow
-* Chart.js
-* D3.js
-
-## Deployment
-
-Frontend:
-
-* Vercel
-
-Backend:
-
-* Railway
-* Render
-* AWS
-
-Containers:
-
-* Docker
-
----
-
-# Project Structure
-
-/frontend
-
-/src
-/components
-/pages
-/hooks
-/services
-/types
-
-/backend
-
-/app
-/api
-/core
-/models
-/schemas
-/services
-/utils
-/database
-
-/docs
-
-/scripts
-
-/tests
-
-/docker
-
----
-
-# Development Standards
-
-## Code Quality
-
-Always:
-
-* Use meaningful names
-* Follow SOLID principles
-* Avoid duplicated code
-* Keep functions small
-* Add comments where needed
-
----
-
-## API Standards
-
-Use REST APIs.
-
-Example:
-
-GET /cases
-
-POST /cases
-
-GET /cases/{id}
-
-PUT /cases/{id}
-
-DELETE /cases/{id}
-
----
-
-## Error Handling
-
-Always include:
-
-* Try/Catch
-* Validation
-* Proper status codes
-* Logging
-
-Never allow silent failures.
-
----
-
-## Security Standards
-
-Mandatory:
-
-* Password hashing
-* JWT authentication
-* Input validation
-* SQL injection protection
-* Rate limiting
-* Environment variables
-
-Never hardcode:
-
-* API Keys
-* Passwords
-* Tokens
-* Secrets
-
----
-
-# Database Design Principles
-
-Use normalized schema.
-
-Core entities:
-
-Users
-
-Cases
-
-Subjects
-
-Identifiers
-
-Accounts
-
-Posts
-
-Connections
-
-Evidence
-
-Reports
-
-ActivityLogs
-
----
-
-# Core Modules
-
-## Module 1: Authentication
-
-Features:
-
-* Register
-* Login
-* JWT
-* Roles
-* Session Management
-
----
-
-## Module 2: Case Management
-
-Features:
-
-* Create Case
-* Update Case
-* Delete Case
-* Assign Subjects
-* Investigation Notes
-
----
-
-## Module 3: OSINT Collection
-
-Input:
-
-* Username
-* Email
-* Phone
-* Profile URL
-
-Output:
-
-* Discovered Profiles
-* Metadata
-* Links
-
----
-
-## Module 4: Correlation Engine
-
-Correlation factors:
-
-### Username Similarity
-
-Weight: 25%
-
-### Bio Similarity
-
-Weight: 15%
-
-### Profile Metadata
-
-Weight: 20%
-
-### Shared Links
-
-Weight: 20%
-
-### Content Similarity
-
-Weight: 20%
-
-Generate overall confidence score.
-
----
-
-## Module 5: Content Analysis
-
-Features:
-
-* Keyword Extraction
-* Hashtag Analysis
-* Topic Analysis
-* Sentiment Analysis
-
----
-
-## Module 6: Behavioral Analysis
-
-Features:
-
-* Posting Frequency
-* Time Patterns
-* Activity Peaks
-* Posting Gaps
-
----
-
-## Module 7: Relationship Analysis
-
-Features:
-
-* Mention Network
-* Shared Connections
-* Community Detection
-
----
-
-## Module 8: Visualization
-
-Features:
-
-* Network Graph
-* Timeline
-* Activity Charts
-* Correlation Dashboard
-
----
-
-## Module 9: Reporting
-
-Generate:
-
-* Investigation Summary
-* Correlation Findings
-* Evidence Sources
-* Confidence Scores
-* Limitations
-
----
-
-# AI Assistant Behavior
-
-Whenever asked for implementation help:
-
-Always provide:
-
-1. Problem Analysis
-2. Architecture Design
-3. Database Changes
-4. API Design
-5. Backend Implementation
-6. Frontend Implementation
-7. Security Considerations
-8. Testing Strategy
-
-Do not jump directly into coding.
-
----
-
-# Hackathon Judging Focus
-
-Optimize for:
-
-* Innovation
-* Technical Depth
-* Demonstration Quality
-* Practical Relevance
-* UI/UX
-* Scalability Potential
-
-Always recommend solutions that improve judging impact.
-
----
-
-# Expected Output Style
-
-When answering:
-
-1. Brief Summary
-2. Recommended Solution
-3. Technical Explanation
-4. Risks
-5. MVP Approach
-6. Future Enhancements
-
-Prefer tables, diagrams, and structured plans whenever possible.
-
----
-
-# Final Goal
-
-By the end of development, the system should allow:
-
-1. Investigator logs in.
-2. Creates a case.
-3. Inputs identifiers.
-4. System discovers public accounts.
-5. System correlates identities.
-6. System analyzes behavior.
-7. System visualizes relationships.
-8. System generates an investigation report.
-
-Every feature should contribute directly to achieving this workflow.
-
+JWT stored as HttpOnly cookie named `aria_token`. Backend reads it via `Cookie(default=None)` dependency. Frontend never touches the token directly — just sends credentials, backend sets/clears the cookie.

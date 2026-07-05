@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Download,
   ExternalLink,
+  Eye,
   FileText,
   FolderOpen,
   GitMerge,
@@ -101,6 +102,8 @@ import { ReportsPanel } from '@/components/reports-panel'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search as SearchBar } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { MonitoringPanel } from '@/components/monitoring-panel'
+import { NotificationBell } from '@/components/notification-bell'
 import { TimelineView } from '@/components/timeline-view'
 
 export const Route = createFileRoute('/_authenticated/cases/$id')({
@@ -169,6 +172,7 @@ type CaseSection =
   | 'correlation'
   | 'graph'
   | 'timeline'
+  | 'monitoring'
   | 'insights'
   | 'intelligence'
   | 'reports'
@@ -707,6 +711,12 @@ function CaseDetail() {
       icon: Calendar,
     },
     {
+      key: 'monitoring',
+      title: 'Monitoring',
+      description: 'Watchlist & live tracking',
+      icon: Eye,
+    },
+    {
       key: 'insights',
       title: 'Analytical Findings',
       description: 'Analytical observations',
@@ -790,6 +800,7 @@ function CaseDetail() {
     <>
       <Header>
         <SearchBar className='me-auto' />
+        <NotificationBell />
         <ThemeSwitch />
         <ConfigDrawer />
         <ProfileDropdown />
@@ -1518,6 +1529,21 @@ function CaseDetail() {
                   description='Chronological case events and collected activity'
                 />
                 <TimelineView caseId={id} apiBase={API} />
+              </section>
+            )}
+
+            {activeCaseSection === 'monitoring' && (
+              <section id='monitoring' className='space-y-4'>
+                <SectionHeading
+                  icon={Eye}
+                  title='Monitoring'
+                  description='Watchlist surveillance and change detection'
+                />
+                <MonitoringPanel
+                  caseId={id}
+                  accounts={accounts}
+                  identifiers={identifiers}
+                />
               </section>
             )}
 
