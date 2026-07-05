@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, Globe, Loader2, Phone, Search, Shield } from 'lucide-react'
+import { ChevronDown, Globe, Loader2, Mail, Phone, Search, Shield } from 'lucide-react'
 import { API } from '@/lib/aria-api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ import { MaigretResults } from './maigret-results'
 import { BreachResults } from './breach-results'
 import { PhoneResults } from './phone-results'
 import { DorkingResults } from './dorking-results'
+import { HoleheResults } from './holehe-results'
 
 interface Identifier {
   id: number
@@ -45,6 +46,7 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
   const [searchingUsername, setSearchingUsername] = useState<string | null>(null)
   const [searchingEmail, setSearchingEmail] = useState<string | null>(null)
   const [searchingPhone, setSearchingPhone] = useState<string | null>(null)
+  const [searchingHolehe, setSearchingHolehe] = useState<string | null>(null)
   const [dorkingIdent, setDorkingIdent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -146,6 +148,34 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
     }
   }
 
+  const handleHoleheLookup = async (value: string) => {
+    setSearchingHolehe(value)
+    setError(null)
+    try {
+      const res = await fetch(
+        `${API}/api/cases/${caseId}/osint/holehe-lookup`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email: value }),
+        }
+      )
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((d) => d.detail)
+          .catch(() => res.statusText)
+        throw new Error(detail)
+      }
+      fetchLookups()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Holehe lookup failed')
+    } finally {
+      setSearchingHolehe(null)
+    }
+  }
+
   const handleDorking = async (ident: Identifier) => {
     setDorkingIdent(ident.value)
     setError(null)
@@ -195,6 +225,7 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
     (l) => l.lookup_type === 'xposedornot' || l.lookup_type === 'hibp'
   )
   const phoneLookups = lookups.filter((l) => l.lookup_type === 'phone')
+  const holeheLookups = lookups.filter((l) => l.lookup_type === 'holehe')
   const dorkingLookups = lookups.filter((l) => l.lookup_type === 'dorking')
   const hasResults = lookups.length > 0
 
@@ -283,6 +314,24 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
                     <span className='font-mono text-sm'>{ident.value}</span>
                   </div>
                   <div className='flex gap-1.5'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={searchingHolehe === ident.value}
+                      onClick={() => handleHoleheLookup(ident.value)}
+                    >
+                      {searchingHolehe === ident.value ? (
+                        <>
+                          <Loader2 className='h-3 w-3 animate-spin' />
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Mail className='h-3 w-3' />
+                          Accounts
+                        </>
+                      )}
+                    </Button>
                     <Button
                       variant='outline'
                       size='sm'
@@ -416,6 +465,18 @@ export function OsintPanel({ caseId, identifiers, onAccountImported }: Props) {
         >
           {breachLookups.map((lookup) => (
             <BreachResults key={lookup.id} lookup={lookup as any} />
+          ))}
+        </ResultSection>
+      )}
+
+      {holeheLookups.length > 0 && (
+        <ResultSection
+          title='Email Account Discovery'
+          icon={<Mail className='h-4 w-4' />}
+          count={holeheLookups.length}
+        >
+          {holeheLookups.map((lookup) => (
+            <HoleheResults key={lookup.id} lookup={lookup as any} />
           ))}
         </ResultSection>
       )}

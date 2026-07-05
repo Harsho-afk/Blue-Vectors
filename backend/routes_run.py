@@ -39,8 +39,10 @@ from fastapi.responses import StreamingResponse
 
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
-from collector.base import SUPPORTED_PLATFORMS
+from collector.base import SUPPORTED_PLATFORMS, save_account_profile, save_phone_seed_accounts
 from collector.phone import PhoneCollector
+from collector.gravatar import lookup_gravatar
+from collector.holehe_lookup import holehe_search
 from collect_stream import collect_one_platform
 from correlator import correlate_case
 from insights.orchestrator import run_all as run_insights
@@ -213,6 +215,9 @@ async def _process_username_seed(case_id: int, ident: dict, emit) -> int:
 
 async def _process_email_seed(case_id: int, ident: dict, emit) -> int:
     email = ident["value"]
+    accounts_added = 0
+
+    # --- Breach lookup ---
     await emit(
         {
             "step": "breach",
@@ -242,11 +247,96 @@ async def _process_email_seed(case_id: int, ident: dict, emit) -> int:
         await emit(
             {"step": "breach", "status": "error", "seed": email, "error": str(e)}
         )
-    return 0
+
+    # --- Holehe: check which sites the email is registered on ---
+    await emit(
+        {
+            "step": "holehe",
+            "status": "running",
+            "seed": email,
+            "message": "Checking email registration across 100+ sites...",
+        }
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        holehe_result = await loop.run_in_executor(None, holehe_search, email)
+
+        conn = get_db_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'holehe' AND input_value = %s",
+                (case_id, email),
+            )
+            cur.execute(
+                """
+                INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+                VALUES (%s, 'holehe', %s, %s)
+                """,
+                (case_id, email, json.dumps(holehe_result)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        found = holehe_result.get("total_found", 0)
+        site_names = [s["name"] for s in holehe_result.get("sites", [])[:5]]
+        preview = ", ".join(site_names)
+        if found > 5:
+            preview += f" +{found - 5} more"
+
+        await emit(
+            {
+                "step": "holehe",
+                "status": "done",
+                "seed": email,
+                "found": found,
+                "message": f"Email registered on {found} site(s)"
+                + (f": {preview}" if preview else ""),
+            }
+        )
+    except Exception as e:
+        log.error("Holehe search failed for '%s': %s", email, e)
+        await emit(
+            {"step": "holehe", "status": "error", "seed": email, "error": str(e)}
+        )
+
+    # --- Gravatar profile (profile picture + display name for correlation) ---
+    try:
+        gravatar_profile = await lookup_gravatar(email)
+        if gravatar_profile:
+            conn = get_db_conn()
+            try:
+                save_account_profile(gravatar_profile, conn, case_id)
+                accounts_added += 1
+            finally:
+                conn.close()
+            await emit(
+                {
+                    "step": "gravatar",
+                    "status": "done",
+                    "seed": email,
+                    "message": "Gravatar profile found — saved for correlation",
+                }
+            )
+        else:
+            await emit(
+                {
+                    "step": "gravatar",
+                    "status": "done",
+                    "seed": email,
+                    "message": "No Gravatar profile found",
+                }
+            )
+    except Exception as e:
+        log.error("Gravatar lookup failed for '%s': %s", email, e)
+
+    return accounts_added
 
 
 async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
     phone = ident["value"]
+    accounts_added = 0
     await emit(
         {
             "step": "phone",
@@ -264,6 +354,10 @@ async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
         try:
             cur = conn.cursor()
             cur.execute(
+                "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'phone' AND input_value = %s",
+                (case_id, phone),
+            )
+            cur.execute(
                 """
                 INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
                 VALUES (%s, %s, %s, %s)
@@ -271,21 +365,34 @@ async def _process_phone_seed(case_id: int, ident: dict, emit) -> int:
                 (case_id, "phone", phone, json.dumps(result_dict)),
             )
             conn.commit()
+
+            # Promote Telegram/WhatsApp profiles to accounts for correlation
+            saved_ids = save_phone_seed_accounts(profile, conn, case_id)
+            accounts_added = len(saved_ids)
         finally:
             conn.close()
+
+        parts = ["Phone lookup complete"]
+        if accounts_added:
+            platforms = []
+            if profile.telegram_user_id:
+                platforms.append("Telegram")
+            if profile.whatsapp_registered:
+                platforms.append("WhatsApp")
+            parts.append(f"{', '.join(platforms)} profile(s) saved for correlation")
 
         await emit(
             {
                 "step": "phone",
                 "status": "done",
                 "seed": phone,
-                "message": "Phone lookup complete",
+                "message": " — ".join(parts),
             }
         )
     except Exception as e:
         log.error("Phone lookup failed for '%s': %s", phone, e)
         await emit({"step": "phone", "status": "error", "seed": phone, "error": str(e)})
-    return 0
+    return accounts_added
 
 
 async def _process_profile_url_seed(case_id: int, ident: dict, emit) -> int:

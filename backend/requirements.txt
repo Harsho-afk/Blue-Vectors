@@ -27,6 +27,7 @@ instagrapi[curl]
 phonenumbers
 telethon
 duckduckgo-search
+holehe
 google-genai>=1.0
 reportlab==4.2.2
 

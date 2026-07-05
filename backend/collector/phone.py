@@ -163,53 +163,6 @@ async def _lookup_twilio(phone: str, session: aiohttp.ClientSession) -> dict:
     )
     return result
 
-
-# ── Nominatim geocoding (OpenStreetMap, free, no API key) ────────────────────
-
-async def _geocode_location(location_text: str, session: aiohttp.ClientSession) -> dict:
-    """
-    Converts a free-text location string into geographic coordinates using the
-    Nominatim API (OpenStreetMap).  Rate limit: 1 request/second — fine for OSINT.
-    Returns {} on any failure.
-    """
-    if not location_text:
-        return {}
-
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": location_text, "format": "json", "limit": "1"}
-    headers = {"User-Agent": "ARIA-OSINT/1.0 (github.com/aria-osint)"}
-
-    try:
-        async with session.get(
-            url,
-            params=params,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                log.warning("Phone: Nominatim returned HTTP %d", resp.status)
-                return {}
-            results = await resp.json(content_type=None)
-    except Exception as exc:
-        log.warning("Phone: Nominatim geocoding failed — %s", exc)
-        return {}
-
-    if not results:
-        log.info("Phone: Nominatim found no results for %r", location_text)
-        return {}
-
-    hit = results[0]
-    try:
-        return {
-            "geo_lat":          float(hit["lat"]),
-            "geo_lon":          float(hit["lon"]),
-            "geo_display_name": hit.get("display_name"),
-        }
-    except (KeyError, ValueError) as exc:
-        log.warning("Phone: Nominatim parse error — %s", exc)
-        return {}
-
-
 # ── phonenumbers (offline, free, no API key needed) ─────────────────────────
 
 def _lookup_phonenumbers(phone: str) -> dict:
@@ -378,32 +331,6 @@ async def _lookup_whatsapp(phone: str, session: aiohttp.ClientSession) -> dict:
     }
 
 
-# ── Web mentions (DuckDuckGo — free, no API key) ─────────────────────────────
-
-def _lookup_web_mentions(phone: str) -> list:
-    try:
-        from duckduckgo_search import DDGS
-    except ImportError:
-        log.warning("Phone: duckduckgo-search not installed — pip install duckduckgo-search")
-        return []
-
-    query = f'"{phone}"'
-    try:
-        results = list(DDGS().text(query, max_results=10))
-    except Exception as exc:
-        log.warning("Phone: DuckDuckGo search failed — %s", exc)
-        return []
-
-    return [
-        {
-            "url":     r.get("href"),
-            "title":   r.get("title"),
-            "snippet": r.get("body"),
-        }
-        for r in results
-    ]
-
-
 # ── Public entry-point ────────────────────────────────────────────────────────
 
 class PhoneCollector:
@@ -436,7 +363,6 @@ class PhoneCollector:
 
             whatsapp_task = asyncio.create_task(_lookup_whatsapp(phone, session))
             twilio_task   = asyncio.create_task(_lookup_twilio(phone, session))
-            web_task      = loop.run_in_executor(None, _lookup_web_mentions, phone)
 
             # Telegram is MTProto; run after creating the above tasks so they
             # proceed concurrently while Telegram negotiates.
@@ -445,17 +371,6 @@ class PhoneCollector:
 
             whatsapp_result = await whatsapp_task
             twilio_result   = await twilio_task
-            web_result      = await web_task
-
-            # Geocode using the most descriptive location string available.
-            # Only geocode if we have a location/region more specific than the country name itself.
-            location_text = numverify_result.get("location") or ""
-            country_name = numverify_result.get("country_name") or ""
-
-            if location_text and location_text.lower() != country_name.lower():
-                geo_result = await _geocode_location(location_text, session)
-            else:
-                geo_result = {}
 
         # ── Carrier / telco (offline phonenumbers library) ────────────────────
         profile.valid        = numverify_result.get("valid")
@@ -478,11 +393,6 @@ class PhoneCollector:
         profile.twilio_caller_name          = twilio_result.get("twilio_caller_name")
         profile.twilio_caller_type          = twilio_result.get("twilio_caller_type")
 
-        # ── Geocoding ────────────────────────────────────────────────────────
-        profile.geo_lat          = geo_result.get("geo_lat")
-        profile.geo_lon          = geo_result.get("geo_lon")
-        profile.geo_display_name = geo_result.get("geo_display_name")
-
         # ── Telegram ─────────────────────────────────────────────────────────
         profile.telegram_display_name      = telegram_result.get("telegram_display_name")
         profile.telegram_username          = telegram_result.get("telegram_username")
@@ -495,22 +405,15 @@ class PhoneCollector:
         profile.whatsapp_profile_photo_url = whatsapp_result.get("whatsapp_profile_photo_url")
         profile.whatsapp_about             = whatsapp_result.get("whatsapp_about")
 
-        # ── Web mentions ─────────────────────────────────────────────────────
-        profile.web_mentions = web_result
-
         log.info(
-            "Phone: %s — valid=%s twilio_valid=%s carrier=%s(%s) geo=(%s,%s) "
-            "TG=%s WA=%s mentions=%d",
+            "Phone: %s — valid=%s twilio_valid=%s carrier=%s(%s) TG=%s WA=%s",
             phone,
             profile.valid,
             profile.twilio_valid,
             profile.twilio_carrier_name or profile.carrier,
             profile.twilio_line_type or profile.line_type,
-            profile.geo_lat,
-            profile.geo_lon,
             "yes" if profile.telegram_user_id else "no",
             "yes" if profile.whatsapp_registered else "no",
-            len(profile.web_mentions),
         )
 
         return profile

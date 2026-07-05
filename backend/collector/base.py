@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from .twitter import TwitterCollector
 from .phone import collect_phone  # noqa: F401  (re-exported)
+from .gravatar import lookup_gravatar  # noqa: F401
 from .reddit import RedditCollector
 from .github import GitHubCollector
 from .instagram import InstagramCollector
@@ -158,6 +159,41 @@ def save_to_db(profile: AccountProfile, conn, case_id: int) -> int:
     for post in profile.posts:
         save_post(account_id, post, conn)
     return account_id
+
+
+def save_phone_seed_accounts(phone_profile, conn, case_id: int) -> list[int]:
+    """Promote Telegram/WhatsApp profiles from a phone lookup into the
+    accounts table so the correlation engine can compare them against
+    other collected accounts (CLIP on profile images, rapidfuzz on
+    display names, etc.)."""
+    saved = []
+    if phone_profile.telegram_user_id:
+        tg_username = phone_profile.telegram_username or f"tg_{phone_profile.telegram_user_id}"
+        tg = AccountProfile(
+            platform="telegram",
+            username=tg_username,
+            display_name=phone_profile.telegram_display_name or "",
+            bio="",
+            location="",
+            profile_image_url=phone_profile.telegram_profile_photo_url or "",
+            created_utc=None,
+        )
+        saved.append(save_account_profile(tg, conn, case_id))
+
+    if phone_profile.whatsapp_registered:
+        wa_username = phone_profile.phone_number.lstrip("+")
+        wa = AccountProfile(
+            platform="whatsapp",
+            username=wa_username,
+            display_name=phone_profile.whatsapp_display_name or "",
+            bio=phone_profile.whatsapp_about or "",
+            location="",
+            profile_image_url=phone_profile.whatsapp_profile_photo_url or "",
+            created_utc=None,
+        )
+        saved.append(save_account_profile(wa, conn, case_id))
+
+    return saved
 
 
 # Public entry-points

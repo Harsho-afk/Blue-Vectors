@@ -486,6 +486,10 @@ async def _hibp_lookup(email: str) -> BreachLookupResult:
 def save_maigret_search(conn, case_id: int, result: dict) -> int:
     """Save Maigret username search results to osint_lookups table."""
     cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'maigret' AND input_value = %s",
+        (case_id, result["username"]),
+    )
     result_json = json.dumps(result, ensure_ascii=False)
     cur.execute(
         """
@@ -502,6 +506,10 @@ def save_maigret_search(conn, case_id: int, result: dict) -> int:
 def save_breach_lookup(conn, case_id: int, result: BreachLookupResult) -> int:
     """Save breach lookup results to osint_lookups table."""
     cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'xposedornot' AND input_value = %s",
+        (case_id, result.email),
+    )
     result_json = json.dumps(result.to_dict(), ensure_ascii=False)
     cur.execute(
         """

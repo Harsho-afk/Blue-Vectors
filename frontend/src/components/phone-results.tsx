@@ -1,4 +1,4 @@
-import { Phone, MapPin, ExternalLink, ShieldAlert } from 'lucide-react'
+import { Phone, ExternalLink, ShieldAlert } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -67,20 +67,6 @@ export function PhoneResults({ lookup }: Props) {
   const callerName = r.twilio_caller_name as string | null
   const callerType = r.twilio_caller_type as string | null
 
-  // Geocoding Coordinates
-  const geoLat = r.geo_lat as number | null
-  const geoLon = r.geo_lon as number | null
-  const geoDisplayName = r.geo_display_name as string | null
-
-  // Map embedding iframe URL
-  const mapIframeUrl = geoLat && geoLon
-    ? `https://www.openstreetmap.org/export/embed.html?bbox=${geoLon - 0.015}%2C${geoLat - 0.015}%2C${geoLon + 0.015}%2C${geoLat + 0.015}&layer=mapnik&marker=${geoLat}%2C${geoLon}`
-    : null
-
-  const mapExternalUrl = geoLat && geoLon
-    ? `https://www.openstreetmap.org/?mlat=${geoLat}&mlon=${geoLon}#map=15/${geoLat}/${geoLon}`
-    : null
-
   return (
     <div className='overflow-hidden rounded-lg border bg-card'>
       {/* Header */}
@@ -134,108 +120,49 @@ export function PhoneResults({ lookup }: Props) {
         </div>
       )}
 
-      {/* Grid for Carrier & Location details */}
-      <div className='grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x'>
-        {/* Carrier Section */}
-        <div className='px-4 py-3 flex flex-col justify-between'>
-          <div>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-              Carrier Information
-            </p>
-            <div className='space-y-0.5'>
-              <InfoRow label='Line Type' value={lineType} />
-              <InfoRow label='Carrier' value={carrier} />
-              <InfoRow
-                label='Country'
-                value={countryName}
-                sub={countryCode}
-              />
-              <InfoRow label='Location (Carrier)' value={location} />
-              
-              {!!r.twilio_mobile_country_code && (
-                <InfoRow 
-                  label='Network Code (MCC/MNC)' 
-                  value={`${r.twilio_mobile_country_code}/${r.twilio_mobile_network_code ?? '—'}`} 
-                />
-              )}
-            </div>
-          </div>
+      {/* Carrier details */}
+      <div className='px-4 py-3'>
+        <p className='mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+          Carrier Information
+        </p>
+        <div className='space-y-0.5'>
+          <InfoRow label='Line Type' value={lineType} />
+          <InfoRow label='Carrier' value={carrier} />
+          <InfoRow
+            label='Country'
+            value={countryName}
+            sub={countryCode}
+          />
+          <InfoRow label='Location (Carrier)' value={location} />
 
-          {/* Caller Name Info (CNAM) */}
-          {callerName && (
-            <div className='mt-3 pt-3 border-t border-muted/50'>
-              <p className='mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-                Caller ID (CNAM)
-              </p>
-              <div className='rounded bg-muted/20 p-2 text-xs flex flex-col gap-1'>
-                <div className='flex justify-between'>
-                  <span className='text-muted-foreground'>Caller Name:</span>
-                  <span className='font-medium text-foreground'>{callerName}</span>
-                </div>
-                {callerType && (
-                  <div className='flex justify-between'>
-                    <span className='text-muted-foreground'>Type:</span>
-                    <span className='font-medium text-foreground'>{callerType}</span>
-                  </div>
-                )}
-              </div>
-            </div>
+          {!!r.twilio_mobile_country_code && (
+            <InfoRow
+              label='Network Code (MCC/MNC)'
+              value={`${r.twilio_mobile_country_code}/${r.twilio_mobile_network_code ?? '—'}`}
+            />
           )}
         </div>
 
-        {/* Location & Map Section */}
-        <div className='px-4 py-3 flex flex-col justify-between'>
-          <div>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-              Geographic Intelligence
+        {/* Caller Name Info (CNAM) */}
+        {callerName && (
+          <div className='mt-3 pt-3 border-t border-muted/50'>
+            <p className='mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+              Caller ID (CNAM)
             </p>
-            {geoLat && geoLon ? (
-              <div className='space-y-2'>
-                {mapIframeUrl && (
-                  <div className='relative w-full h-[150px] rounded border overflow-hidden bg-muted/20'>
-                    <iframe
-                      title='Location Map'
-                      src={mapIframeUrl}
-                      className='absolute inset-0 w-full h-full border-none'
-                      scrolling='no'
-                    />
-                  </div>
-                )}
-                <div className='flex items-start gap-1.5 text-xs'>
-                  <MapPin className='h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0' />
-                  <div className='flex-1'>
-                    <p className='font-medium text-foreground line-clamp-2'>
-                      {geoDisplayName || location || countryName}
-                    </p>
-                    <div className='mt-1 flex items-center justify-between'>
-                      <span className='font-mono text-[10px] text-muted-foreground'>
-                        {geoLat.toFixed(5)}, {geoLon.toFixed(5)}
-                      </span>
-                      {mapExternalUrl && (
-                        <a
-                          href={mapExternalUrl}
-                          target='_blank'
-                          rel='noopener noreferrer'
-                          className='inline-flex items-center gap-1 text-[10px] text-primary hover:underline'
-                        >
-                          OpenStreetMap <ExternalLink className='h-2.5 w-2.5' />
-                        </a>
-                      )}
-                    </div>
-                  </div>
+            <div className='rounded bg-muted/20 p-2 text-xs flex flex-col gap-1'>
+              <div className='flex justify-between'>
+                <span className='text-muted-foreground'>Caller Name:</span>
+                <span className='font-medium text-foreground'>{callerName}</span>
+              </div>
+              {callerType && (
+                <div className='flex justify-between'>
+                  <span className='text-muted-foreground'>Type:</span>
+                  <span className='font-medium text-foreground'>{callerType}</span>
                 </div>
-              </div>
-            ) : (
-              <div className='rounded border border-dashed py-6 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-1'>
-                <MapPin className='h-5 w-5 opacity-40 mb-1' />
-                <p>No map data available</p>
-                <p className='text-[10px] opacity-80 max-w-[200px]'>
-                  Location string from carrier lookup was insufficient to geocode.
-                </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <Separator />
@@ -320,42 +247,6 @@ export function PhoneResults({ lookup }: Props) {
         </div>
       </div>
 
-      {/* Web mentions */}
-      {Array.isArray(r.web_mentions) && r.web_mentions.length > 0 && (
-        <>
-          <Separator />
-          <div className='px-4 py-3'>
-            <div className='mb-2 flex items-center gap-2'>
-              <p className='text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-                Web Mentions
-              </p>
-              <Badge variant='secondary'>{r.web_mentions.length}</Badge>
-            </div>
-            <div className='space-y-2'>
-              {(r.web_mentions as Array<Record<string, string>>).map(
-                (m, i) => (
-                  <div key={i} className='text-xs'>
-                    <a
-                      href={m.url}
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      className='inline-flex items-center gap-1 text-sm text-primary hover:underline'
-                    >
-                      {m.title || m.url} <ExternalLink className='h-3 w-3' />
-                    </a>
-                    {m.snippet && (
-                      <p className='text-muted-foreground mt-0.5 leading-relaxed'>
-                        {m.snippet}
-                      </p>
-                    )}
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
       {/* Confidence / Pipeline Footer */}
       <div className='bg-muted/10 px-4 py-2 border-t text-[10px] text-muted-foreground flex justify-between items-center'>
         <span>Verification Pipeline Confidence: <strong>{isValid ? 'High' : 'Low'}</strong></span>
@@ -365,9 +256,6 @@ export function PhoneResults({ lookup }: Props) {
           </span>
           <span className='flex items-center gap-0.5'>
             Twilio {r.twilio_valid !== null ? '✓' : '—'}
-          </span>
-          <span className='flex items-center gap-0.5'>
-            Geocoded {geoLat !== null ? '✓' : '—'}
           </span>
         </div>
       </div>

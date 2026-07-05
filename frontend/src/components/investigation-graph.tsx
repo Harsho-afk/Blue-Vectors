@@ -88,6 +88,8 @@ const PLATFORM_COLORS: Record<string, string> = {
   github: '#8B5CF6',
   instagram: '#E1306C',
   telegram: '#0088CC',
+  whatsapp: '#25D366',
+  gravatar: '#1E8CBE',
   facebook: '#1877F2',
   youtube: '#FF0000',
   linkedin: '#0A66C2',

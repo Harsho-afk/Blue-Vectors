@@ -9,6 +9,7 @@ POST /api/cases/{case_id}/osint/import-account     { platform, username, url, ..
 """
 
 import json
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +18,8 @@ from pydantic import BaseModel, EmailStr
 from auth import get_current_user, get_db_conn
 from osint import run_maigret, breach_lookup, save_maigret_search, save_breach_lookup
 from collector.phone import PhoneCollector
+from collector.base import save_phone_seed_accounts
+from collector.holehe_lookup import holehe_search
 from dorking import run_dorking
 from lead_scorer import score_maigret_results
 
@@ -130,6 +133,45 @@ async def run_breach_lookup(
     }
 
 
+@router.post("/{case_id}/osint/holehe-lookup")
+async def run_holehe_lookup(
+    case_id: int,
+    body: BreachLookupRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Check which sites an email is registered on via Holehe."""
+    conn = get_db_conn()
+    try:
+        _check_case_ownership(conn, case_id, current_user["id"])
+    finally:
+        conn.close()
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, holehe_search, body.email)
+
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'holehe' AND input_value = %s",
+            (case_id, body.email),
+        )
+        cur.execute(
+            """
+            INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
+            VALUES (%s, 'holehe', %s, %s)
+            RETURNING id
+            """,
+            (case_id, body.email, json.dumps(result)),
+        )
+        lookup_id = cur.fetchone()["id"]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"lookup_id": lookup_id, **result}
+
+
 @router.post("/{case_id}/osint/phone-lookup")
 async def run_phone_lookup(
     case_id: int,
@@ -153,6 +195,10 @@ async def run_phone_lookup(
     try:
         cur = conn.cursor()
         cur.execute(
+            "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'phone' AND input_value = %s",
+            (case_id, body.phone),
+        )
+        cur.execute(
             """
             INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
             VALUES (%s, %s, %s, %s)
@@ -162,6 +208,9 @@ async def run_phone_lookup(
         )
         lookup_id = cur.fetchone()["id"]
         conn.commit()
+
+        # Promote Telegram/WhatsApp profiles to accounts for correlation
+        save_phone_seed_accounts(profile, conn, case_id)
     finally:
         conn.close()
 
@@ -240,6 +289,10 @@ async def run_dorking_survey(
     conn = get_db_conn()
     try:
         cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM osint_lookups WHERE case_id = %s AND lookup_type = 'dorking' AND input_value = %s",
+            (case_id, body.value),
+        )
         cur.execute(
             """
             INSERT INTO osint_lookups (case_id, lookup_type, input_value, result_json)
