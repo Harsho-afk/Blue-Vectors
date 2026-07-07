@@ -2,417 +2,338 @@
 
 **Cross-platform identity resolution and SOCMINT case management system.**
 
-ARIA is a case-centric OSINT investigation platform. An investigator creates a case, attaches seed identifiers (username, email, phone, profile URL), and ARIA collects public digital footprints, correlates accounts across platforms, generates analytical insights, and produces structured intelligence reports — all from a single-click investigation runner with real-time progress streaming.
+## Project Overview
+
+ARIA is a case-centric OSINT (Open Source Intelligence) investigation platform. An investigator creates a case, attaches seed identifiers (username, email, phone, profile URL), and ARIA collects public digital footprints, correlates accounts across platforms, generates analytical insights, and produces structured intelligence reports — all from a single-click investigation runner with real-time progress streaming over Server-Sent Events (SSE).
 
 > **Design principle: AI recommends, investigator decides.** ARIA never claims two accounts ARE the same person. Every correlation comes with a confidence score (0–100%), a per-signal breakdown, and evidence citations.
 
----
-
-## Architecture Overview
+### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Frontend (React 19 + Vite)                   │
-│   Dashboard · Investigation Runner · Case Detail · Graph · Timeline │
-│   Evidence Panel · Reports · Monitoring · Settings                  │
-└────────────────────────────────┬────────────────────────────────────┘
-                                 │ REST + SSE
-┌────────────────────────────────▼────────────────────────────────────┐
-│                        Backend (FastAPI)                             │
-│                                                                     │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌─────────┐ ┌──────────┐ │
-│  │Collection│ │  OSINT   │ │ Features  │ │Correlat.│ │ Insights │ │
-│  │ Reddit   │ │ Maigret  │ │ Username  │ │ Tiered  │ │ Timezone │ │
-│  │ Twitter  │ │ Breach   │ │ Bio (NLP) │ │ Hard    │ │ Geo      │ │
-│  │ GitHub   │ │ Holehe   │ │ Image     │ │ links + │ │ Patterns │ │
-│  │Instagram │ │ Dorking  │ │ (CLIP)    │ │ Circum- │ │ Risk     │ │
-│  │          │ │ Phone    │ │ Temporal  │ │ stantial│ │ Keywords │ │
-│  │          │ │ Gravatar │ │ Community │ │         │ │ Coordin. │ │
-│  │          │ │          │ │ Stylometry│ │         │ │ Cross-ref│ │
-│  └──────────┘ └──────────┘ └───────────┘ └─────────┘ └──────────┘ │
-│                                                                     │
-│  ┌──────────────┐  ┌───────────────┐  ┌────────────────────────┐   │
-│  │ LLM Analyst  │  │ Report Builder│  │ Monitoring Engine      │   │
-│  │ (Groq/Gemini)│  │ (JSON + PDF)  │  │ (Background scheduler) │   │
-│  └──────────────┘  └───────────────┘  └────────────────────────┘   │
-└────────────────────────────────┬────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Frontend (React 19 + Vite, nginx)             │
+│  Dashboard · Investigation Runner · Case Detail · Graph · Timeline│
+│  Evidence Panel · Reports · Monitoring · Alerts                   │
+└───────────────────────────────┬───────────────────────────────────┘
+                                 │ REST (/api) + SSE
+┌───────────────────────────────▼───────────────────────────────────┐
+│                       Backend (FastAPI, Python 3.12)               │
+│  Collection: Reddit · Twitter/X · GitHub · Instagram                │
+│  OSINT: Maigret · breach lookup · Holehe · dorking · phone · Gravatar│
+│  Features: username/bio(NLP)/image(CLIP)/temporal/community/stylo   │
+│  Correlator: tiered hard-link + circumstantial scoring               │
+│  Insights: timezone · geo · cross-link · pattern-of-life ·           │
+│            coordination · risk · keywords · consistency ·           │
+│            distinctiveness                                          │
+│  LLM Analyst (Groq / Gemini) · Report Builder (JSON/HTML/PDF) ·      │
+│  Monitoring Engine (background scheduler, 30s sweep)                 │
+└───────────────────────────────┬───────────────────────────────────┘
                                  │
-┌────────────────────────────────▼────────────────────────────────────┐
-│  PostgreSQL (14 tables) · Redlib (Reddit proxy) · WA Sidecar       │
+┌───────────────────────────────▼───────────────────────────────────┐
+│  PostgreSQL 17 (14 tables) · Redlib (Reddit proxy) · WA sidecar    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Key Features
+
+- **Data collection** from Reddit (self-hosted Redlib → Reddit JSON API → public Redlib fallback), Twitter/X (via `twikit` with browser cookies), GitHub, and Instagram (via `instagrapi`)
+- **OSINT lookups**: Maigret username enumeration, breach lookup (XposedOrNot / HIBP), Holehe email discovery, Serper.dev-backed web dorking, phone OSINT (phonenumbers, Telegram, WhatsApp, Twilio Lookup), Gravatar
+- **Correlation engine** combining multiple similarity signals (username, bio/NLP, profile image via CLIP, temporal patterns, community overlap, stylometry) into a tiered hard-link + circumstantial confidence score
+- **9 analytical insight modules**: timezone, network geography, cross-link detection, pattern-of-life, coordination detection, risk assessment, keyword extraction, identity consistency, distinctiveness
+- **LLM-powered intelligence briefings** (Groq first, Gemini fallback) — every claim is cited to specific insight IDs, no external knowledge is introduced
+- **SOCMINT report builder**: JSON, HTML preview, and PDF export
+- **Monitoring/watchlist**: background scheduler (30-second sweep) with baseline snapshots, change detection, and investigator alerts
+- **One-click investigation runner** that orchestrates the full pipeline and streams progress live via SSE
+
+### Tech Stack
+
+| Layer          | Technology                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
+| Frontend       | React 19, Vite, TypeScript, TanStack Router/Table/Query, Zustand, Tailwind CSS 4, Radix UI, Recharts, react-force-graph-2d |
+| Backend        | FastAPI, Uvicorn, Python 3.12                                                                                 |
+| Database       | PostgreSQL 17 (14 tables, auto-migrated on startup)                                                           |
+| Auth           | JWT via `python-jose`, httpOnly cookie, `bcrypt` password hashing                                             |
+| Collection     | httpx, aiohttp, twikit, instagrapi, socid-extractor, Maigret, Holehe                                          |
+| NLP / ML       | sentence-transformers, scikit-learn, rapidfuzz, imagehash, Pillow, scipy, numpy                               |
+| LLM            | Groq (`llama-3.3-70b-versatile`, via raw HTTPX) and/or `google-genai` (`gemini-2.0-flash`)                     |
+| Reporting      | ReportLab (PDF), Jinja2 (HTML)                                                                                |
+| Phone OSINT    | phonenumbers, Telethon (Telegram), whatsapp-web.js sidecar, Twilio Lookup v2, duckduckgo-search                |
+| Web search     | Serper.dev (Google results)                                                                                  |
+| Infrastructure | Docker Compose (postgres, redlib, wa-sidecar, backend, frontend)                                              |
+
 ---
 
-## Features
+## Prerequisites
 
-### Data Collection
-- **Reddit** — 3-source waterfall: self-hosted Redlib → Reddit JSON API → public Redlib instances
-- **Twitter/X** — via twikit with browser-extracted cookies
-- **GitHub** — REST API v3 (repos, events, follower/following network)
-- **Instagram** — instaloader, fully anonymous, public-only (no login, no Stories)
+- **Docker** and **Docker Compose** v2+
+- A `.env` file in the project root (next to `docker-compose.yml`) — see [Step 2](#step-2-create-your-env-file) below
 
-### OSINT Lookups
-- **Maigret** — username enumeration across 500+ platforms with structured profile extraction and category tagging
-- **Breach lookup** — XposedOrNot (free, no key) with HIBP v3 fallback
-- **Holehe** — email-to-account discovery (100+ sites via password reset probing)
-- **Dorking** — DuckDuckGo-powered web search with deterministic templates + LLM query planning
-- **Phone OSINT** — phonenumbers (carrier/country), Telegram (Telethon), WhatsApp (sidecar service)
-- **Gravatar** — email-to-avatar/profile lookup
-- **Lead scoring** — each Maigret hit scored 0–100 to separate strong leads from noise
+### Credentials you'll want on hand
+Only `DATABASE_URL` and `JWT_SECRET` are strictly required to boot the app. Everything else unlocks a specific collector/feature and is optional until you need it:
 
-### Identity Correlation (7 Signals)
-| Signal | Method | Library |
-|--------|--------|---------|
-| Username similarity | Levenshtein + Jaro-Winkler + partial ratio | rapidfuzz |
-| Bio similarity | Cosine similarity of sentence embeddings | sentence-transformers (all-MiniLM-L6-v2) |
-| Profile image | CLIP cosine similarity with baseline calibration | CLIP (clip-ViT-B-32) |
-| Temporal patterns | 1 - Jensen-Shannon divergence of posting-hour histograms | scipy |
-| Community overlap | Jaccard similarity of subreddit/topic sets | — |
-| Stylometry | Cosine similarity of character n-gram TF-IDF vectors | scikit-learn |
-| Geography | Timezone and location agreement across accounts | — |
+| Variable(s) | Unlocks | How to get it |
+| --- | --- | --- |
+| `DATABASE_URL` | App boot | PostgreSQL connection string |
+| `JWT_SECRET` | Secure auth | Any random string (defaults to an insecure dev value if unset) |
+| `TWITTER_CT0`, `TWITTER_AUTH_TOKEN` | Twitter/X collection | Log into x.com → DevTools → Application → Cookies → copy `ct0` and `auth_token` |
+| `INSTAGRAM_SESSION_ID`, `INSTAGRAM_USERNAME` | Instagram collection | Log into instagram.com → DevTools → Application → Cookies → copy `sessionid` |
+| `GITHUB_TOKEN` | Higher GitHub rate limit (60/hr → 5000/hr) | Personal access token, no scopes needed |
+| `GROQ_API_KEY` and/or `GEMINI_API_KEY` | Intelligence briefings | Groq console (free tier) and/or Google AI Studio |
+| `SERPER_API_KEY` | Web dorking | serper.dev (2,500 free queries on signup) |
+| `HIBP_API_KEY` | Breach lookup upgrade (falls back to free XposedOrNot if unset) | haveibeenpwned.com API |
+| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION` | Telegram phone OSINT | my.telegram.org → API development tools, then generate a session with Telethon |
+| `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` or `TWILIO_API_KEY`/`TWILIO_API_KEY_SECRET` | Twilio phone Lookup (carrier, line type, caller name) | Twilio console |
+| `WHATSAPP_SIDECAR_URL` | WhatsApp phone OSINT | Runs automatically as the `wa-sidecar` Docker service (needs a one-time QR scan) |
 
-**Tiered correlation engine:**
-- **Tier 1 (hard links)** — bio cross-links, shared email/phone, Maigret linked accounts → confidence floor 80%
-- **Tier 2 (conditional)** — username similarity weighted by distinctiveness
-- **Tier 3 (corroborating)** — bio, temporal, community, stylometry, geography signals
+---
 
-### Analytical Insights (8 Modules)
-- **Timezone estimation** — inferred from posting patterns
-- **Network geography** — subreddit and location-based geo signals
-- **Cross-link detection** — URLs, handles, emails found in bios/posts linking to other platforms
-- **Pattern of life** — activity rhythms, posting frequency, spike/gap detection
-- **Coordination detection** — synchronized activity across accounts
-- **Risk assessment** — behavioral risk indicators
-- **Keyword extraction** — TF-IDF top keywords per account
-- **Identity consistency** — cross-checks insights from Pass 1 for contradictions/corroboration
+## Step-by-Step Setup and Installation Guide
 
-### Intelligence Briefing
-LLM-powered analyst (Groq or Gemini) synthesizes insights into a structured intelligence briefing with every claim cited to specific insight IDs. The LLM only sees computed insights, never raw posts.
+### Step 1: Clone the repository
 
-### SOCMINT Reports
-Deterministic report builder assembling versioned report snapshots from case data. Includes methodology notes, confidence assessments, limitations, and open-source references. Available as JSON, rendered HTML preview, or PDF export (via ReportLab).
-
-### Monitoring / Watchlist
-Background scheduler that continuously monitors enrolled targets:
-- Captures periodic snapshots (profile re-collection, Maigret, dorking, breach)
-- Diffs against baseline to detect profile changes, new posts, network changes, new breaches
-- Creates events and investigator-facing alerts with priority levels
-- Triggers correlation recomputation on identity-affecting changes
-
-### One-Click Investigation Runner
-`POST /api/cases/{case_id}/run` orchestrates the full pipeline via SSE streaming:
-
-```
-Maigret (username enum) ──┐
-Deep collectors (platform) ├── concurrent ──→ Correlation ──┐
-Breach lookup (email) ─────┤                  Insights ─────├── concurrent ──→ Intelligence Briefing
-Phone OSINT ───────────────┘                                │
-Holehe (email) ────────────┘                                └── sequential after both finish
+```bash
+git clone https://github.com/Harsho-afk/Blue-Vectors.git
+cd Blue-Vectors
 ```
 
----
+### Step 2: Create your `.env` file
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | React 19, Vite, TypeScript, TanStack Router/Table/Query, shadcn/ui, Tailwind CSS 4, Zustand, Recharts, react-force-graph-2d |
-| **Backend** | FastAPI (Python 3.12), Uvicorn |
-| **Database** | PostgreSQL 17 (14 tables) |
-| **Auth** | JWT (httpOnly cookies), bcrypt |
-| **Collection** | httpx, twikit, instaloader, Maigret, Holehe |
-| **NLP/ML** | sentence-transformers, CLIP (clip-ViT-B-32), scikit-learn, rapidfuzz, scipy, numpy |
-| **LLM** | Google Generative AI (Gemini), Groq |
-| **Reporting** | ReportLab (PDF), Jinja2 (HTML) |
-| **Phone OSINT** | phonenumbers, Telethon (Telegram), whatsapp-web.js (sidecar) |
-| **Web Search** | duckduckgo-search |
-| **Infrastructure** | Docker Compose (5 services) |
-
----
-
-## Quick Start
-
-### Prerequisites
-- Docker and Docker Compose
-- A `.env` file at the project root
-
-### 1. Configure environment
-
-Create a `.env` file in the project root:
+Create a `.env` file in the project root, next to `docker-compose.yml`:
 
 ```env
+# Required
 DATABASE_URL=postgresql://aria:aria_password@localhost:5432/aria
-JWT_SECRET=your_jwt_signing_secret_here
+JWT_SECRET=replace-with-a-long-random-string
+
+# Optional — auth cookie tuning (defaults shown)
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_MINUTES=1440
 COOKIE_SECURE=false
 
-# Twitter (required for Twitter collection)
-TWITTER_CT0=your_ct0_value
-TWITTER_AUTH_TOKEN=your_auth_token
+# Optional — Twitter/X collection
+TWITTER_CT0=
+TWITTER_AUTH_TOKEN=
 
-# GitHub (optional — raises rate limit from 60/hr to 5000/hr)
+# Optional — Instagram collection
+INSTAGRAM_SESSION_ID=
+INSTAGRAM_USERNAME=
+INSTAGRAM_PROXY=
+
+# Optional — GitHub rate limit boost
 GITHUB_TOKEN=
 
-# Instagram (optional — tune anonymous request pacing, default 1.5s + jitter)
-INSTAGRAM_REQUEST_DELAY=1.5
-
-# LLM Analyst (at least one required for intelligence briefings)
+# Optional — LLM intelligence briefings (at least one recommended)
 GROQ_API_KEY=
 GEMINI_API_KEY=
 
-# Breach lookup (optional — defaults to XposedOrNot if unset)
+# Optional — web dorking
+SERPER_API_KEY=
+DORKING_SEARCH_CONCURRENCY=4
+
+# Optional — breach lookup upgrade
 HIBP_API_KEY=
 
-# Telegram phone OSINT (optional)
+# Optional — Telegram phone OSINT
 TELEGRAM_API_ID=
 TELEGRAM_API_HASH=
 TELEGRAM_SESSION=
+
+# Optional — Twilio phone Lookup
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_API_KEY=
+TWILIO_API_KEY_SECRET=
 ```
 
-**Twitter cookies:** log into x.com → DevTools (F12) → Application → Cookies → copy `ct0` and `auth_token`. Cookies expire after ~2–3 weeks.
+Leave `WHATSAPP_SIDECAR_URL` and `DATABASE_URL`'s host alone — `docker-compose.yml` injects the container-network values below on top of your `.env` automatically at runtime, so you don't need to set them yourself:
 
-**GitHub token:** create at github.com/settings/tokens — no scopes needed for public data reads.
+```
+REDLIB_URL=http://aria-redlib:8080
+REDLIB_PUBLIC_URL=http://localhost:8080
+WHATSAPP_SIDECAR_URL=http://aria-wa-sidecar:3333
+```
 
-### 2. Run with Docker Compose
+---
+
+## Docker Setup and Execution Steps
+
+Docker Compose brings up all 5 services together: `postgres`, `redlib` (Reddit proxy), `wa-sidecar` (WhatsApp lookups), `backend`, and `frontend`.
+
+### 1. Build and start all services
 
 ```bash
 docker compose up --build
 ```
 
-This starts 5 services:
-| Service | Port | Description |
-|---------|------|-------------|
-| `postgres` | 5432 | PostgreSQL with schema auto-applied on first init |
-| `redlib` | 8080 | Self-hosted Reddit frontend (privacy proxy) |
-| `wa-sidecar` | 3333 | WhatsApp Web lookup service |
-| `backend` | 8000 | FastAPI application |
-| `frontend` | 80 | nginx-served React build |
+Run detached with `-d`:
 
-### 3. Run locally without Docker
-
-**Database:**
 ```bash
-psql -d aria -f backend/schema.sql
+docker compose up --build -d
 ```
 
-**Backend:**
+The `backend` service waits for `postgres` to report healthy (via `pg_isready`) before starting, and the Postgres container automatically applies `backend/schema.sql` on first initialization.
+
+### 2. Services and ports
+
+| Service      | Container name    | Port(s)   | Purpose                                              |
+| ------------ | ------------------ | --------- | ----------------------------------------------------- |
+| `postgres`   | `aria-postgres`    | 5432      | PostgreSQL 17, schema auto-applied on first init       |
+| `redlib`     | `aria-redlib`      | 8080      | Self-hosted Reddit frontend (privacy-preserving proxy) |
+| `wa-sidecar` | `aria-wa-sidecar`  | 3333      | WhatsApp Web lookup service (needs a one-time QR scan) |
+| `backend`    | `aria-backend`     | 8000      | FastAPI application                                    |
+| `frontend`   | `aria-frontend`    | 80        | nginx serving the built React app, proxies `/api` and `/collect` to the backend |
+
+### 3. Link WhatsApp (first run only)
+
+The `wa-sidecar` service authenticates via a QR code the first time it starts, the same way WhatsApp Web does:
+
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app:app --reload
+docker compose logs -f wa-sidecar
 ```
 
-**Frontend:**
+Scan the printed QR code from **WhatsApp → Linked Devices → Link a Device**. The session is persisted in the `wa_auth` Docker volume, so this is only needed once.
+
+### 4. Access the application
+
+Once containers report healthy, open `http://localhost` (port 80) for the frontend. The backend API is reachable directly at `http://localhost:8000`, and Redlib at `http://localhost:8080`.
+
+### 5. View logs
+
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose logs -f            # all services
+docker compose logs -f backend    # a single service
 ```
 
-Set `VITE_API_URL` in `frontend/.env` to point at the backend (e.g. `http://localhost:8000`).
+### 6. Stop the services
+
+```bash
+docker compose down
+```
+
+Add `-v` to also remove the `postgres_data` and `wa_auth` volumes (this deletes all stored case data and the WhatsApp session):
+
+```bash
+docker compose down -v
+```
+
+### 7. Rebuild after code changes
+
+```bash
+docker compose up --build
+```
+
+Compose only rebuilds the images whose build context changed.
 
 ---
 
 ## Usage
 
-### Web Application
+### Web application
 
-1. **Register / Log in** — create an investigator account
-2. **New Investigation** — create a case with a title and one or more seed identifiers (username, email, phone, or profile URL)
-3. **Run Investigation** — one-click runs the full pipeline: Maigret enumeration → deep platform collection → breach/phone lookups → correlation → insights → intelligence briefing, all streamed live via SSE
-4. **Case Detail** — view collected accounts, posts, OSINT results, correlation matches, evidence breakdowns, and the investigation graph
-5. **Reports** — generate versioned SOCMINT reports (JSON / HTML preview / PDF)
-6. **Monitoring** — enroll targets for continuous watchlist monitoring with automated change detection and alerts
+1. **Register / log in** — create an investigator account
+2. **New investigation** — create a case with a title and one or more seed identifiers (username, email, phone, or profile URL)
+3. **Run investigation** (`POST /api/cases/{id}/run`) — one click runs the full pipeline (collection → Maigret enumeration → breach/phone lookups → correlation → insights → intelligence briefing), streamed live via SSE
+4. **Case detail** — view collected accounts, posts, OSINT results, correlation matches with evidence breakdowns, and the investigation graph
+5. **Reports** — generate versioned SOCMINT reports (JSON, HTML preview, or PDF)
+6. **Monitoring** — enroll targets for continuous watchlist monitoring; the background scheduler sweeps every 30 seconds and raises alerts on detected changes
 
-### REST API
+### REST API reference
 
-All endpoints require authentication via JWT cookie.
+All endpoints below require authentication via the `aria_token` JWT cookie set on login.
 
-**Auth:**
+**Auth** (`/api/auth`)
 ```
 POST   /api/auth/register
 POST   /api/auth/login
 POST   /api/auth/logout
 GET    /api/auth/me
+PUT    /api/auth/profile
 ```
 
-**Cases:**
+**Cases** (`/api/cases`)
 ```
-POST   /api/cases                           Create case with identifiers
-GET    /api/cases                           List cases
-GET    /api/cases/{id}                      Case detail with all associated data
-DELETE /api/cases/{id}                      Delete case (cascade)
-POST   /api/cases/{id}/identifiers          Add identifiers to case
-POST   /api/cases/{id}/collect              Collect from a single platform
-POST   /api/cases/{id}/run                  One-click full investigation (SSE)
-```
-
-**OSINT:**
-```
-POST   /api/cases/{id}/osint/username-search     Maigret username enumeration
-POST   /api/cases/{id}/osint/breach-lookup        Breach lookup
-POST   /api/cases/{id}/osint/phone-lookup         Phone OSINT
-POST   /api/cases/{id}/osint/dorking              Web dorking search
-POST   /api/cases/{id}/osint/holehe               Email-to-account discovery
-GET    /api/cases/{id}/osint                      List all OSINT lookups for case
+POST   /api/cases                              Create case
+GET    /api/cases                              List cases
+GET    /api/cases/{case_id}                    Case detail
+DELETE /api/cases/{case_id}                     Delete case
+PATCH  /api/cases/{case_id}/title
+PATCH  /api/cases/{case_id}/status
+POST   /api/cases/{case_id}/identifiers         Add identifier
+PUT    /api/cases/{case_id}/identifiers/{id}
+DELETE /api/cases/{case_id}/identifiers/{id}
+POST   /api/cases/{case_id}/correlate           Run correlation
+GET    /api/cases/{case_id}/results
+POST   /api/cases/{case_id}/intelligence        Generate LLM briefing
+GET    /api/cases/{case_id}/intelligence
+POST   /api/cases/{case_id}/collect             Collect from a single platform
+POST   /api/cases/{case_id}/run                 One-click full investigation (SSE)
 ```
 
-**Analysis:**
+**OSINT** (`/api/cases/{case_id}/osint`)
 ```
-GET    /api/cases/{id}/graph                Investigation graph (nodes + edges)
-GET    /api/cases/{id}/timeline             Chronological event timeline
-```
-
-**Reports:**
-```
-POST   /api/cases/{id}/reports              Generate new report version
-GET    /api/cases/{id}/reports              List report versions
-GET    /api/cases/{id}/reports/{rid}        Retrieve report JSON
-GET    /api/cases/{id}/reports/{rid}/html   Rendered HTML preview
-GET    /api/cases/{id}/reports/readiness    Check report generation readiness
+POST   /api/cases/{case_id}/osint/username-search    Maigret enumeration
+POST   /api/cases/{case_id}/osint/breach-lookup
+POST   /api/cases/{case_id}/osint/holehe-lookup
+POST   /api/cases/{case_id}/osint/phone-lookup
+POST   /api/cases/{case_id}/osint/dorking
+POST   /api/cases/{case_id}/osint/import-account
+GET    /api/cases/{case_id}/osint                    List all lookups for a case
 ```
 
-**Monitoring:**
+**Analysis**
 ```
-POST   /api/cases/{id}/monitor-targets      Enroll target for monitoring
-GET    /api/cases/{id}/monitor-targets      List monitored targets
-PATCH  /api/monitor-targets/{id}            Update monitoring config
-DELETE /api/monitor-targets/{id}            Remove from watchlist
-GET    /api/alerts                          List investigator alerts
-PATCH  /api/alerts/{id}                     Update alert status
+GET    /api/cases/{case_id}/graph               Investigation graph (nodes + edges)
+GET    /api/cases/{case_id}/timeline            Chronological event timeline
 ```
 
----
-
-## Database Schema (14 Tables)
-
+**Reports** (`/api/cases/{case_id}/reports`)
 ```
-── Auth & Case Management ──────────────────────
-users               Investigator accounts
-cases               Investigation cases (owned by investigator)
-case_identifiers    Seed identifiers per case (username/email/phone/URL)
-
-── Data Collection & OSINT ─────────────────────
-accounts            Collected platform profiles (per-case)
-posts               Individual posts/events per account
-osint_lookups       Maigret, breach, holehe, phone, dorking results
-
-── Correlation & Analysis ──────────────────────
-linkage_results     Pairwise account correlations with confidence scores
-insights            Deterministic analytical insights (7 categories)
-intelligence_reports  LLM-synthesized intelligence briefings
-socmint_reports     Versioned SOCMINT report snapshots
-
-── Monitoring System ───────────────────────────
-monitor_targets     Profiles under active monitoring
-monitor_snapshots   Point-in-time state captures for diffing
-monitor_events      Detected changes between snapshots
-alerts              Investigator-facing notifications
+GET    /api/cases/{case_id}/reports/readiness
+POST   /api/cases/{case_id}/reports             Generate a new report version
+GET    /api/cases/{case_id}/reports             List report versions
+GET    /api/cases/{case_id}/reports/{report_id}
+GET    /api/cases/{case_id}/reports/{report_id}/html
+GET    /api/cases/{case_id}/reports/{report_id}/pdf
 ```
 
----
-
-## Project Structure
-
+**Monitoring** (`/api`)
 ```
-Blue-Vectors/
-├── docker-compose.yml              5-service orchestration
-├── .env                            Environment variables (not committed)
-│
-├── backend/
-│   ├── app.py                      FastAPI application + CORS + lifespan
-│   ├── auth.py                     JWT, bcrypt, DB helpers
-│   ├── schema.sql                  PostgreSQL schema (14 tables)
-│   ├── routes_auth.py              Auth endpoints
-│   ├── routes_cases.py             Case CRUD + per-case collection
-│   ├── routes_osint.py             OSINT lookup endpoints
-│   ├── routes_run.py               One-click investigation runner (SSE)
-│   ├── routes_graph.py             Investigation graph assembly
-│   ├── routes_timeline.py          Chronological timeline assembly
-│   ├── routes_reports.py           SOCMINT report generation
-│   ├── routes_monitor.py           Watchlist monitoring API
-│   ├── features.py                 7-signal feature extraction
-│   ├── correlator.py               Tiered pairwise correlation engine
-│   ├── lead_scorer.py              Maigret lead scoring (0-100)
-│   ├── dorking.py                  Web dorking survey agent
-│   ├── osint.py                    Maigret + breach lookup
-│   ├── monitor_engine.py           Background monitoring scheduler
-│   ├── collect_stream.py           Streaming collection helper
-│   ├── collector/
-│   │   ├── base.py                 Collection entrypoints + DB save
-│   │   ├── models.py               AccountProfile / Post dataclasses
-│   │   ├── reddit.py               Reddit collector (3-source waterfall)
-│   │   ├── twitter.py              Twitter collector (twikit)
-│   │   ├── github.py               GitHub collector (REST API v3)
-│   │   ├── instagram.py            Instagram collector (instaloader)
-│   │   ├── phone.py                Phone OSINT (phonenumbers + Telegram + WhatsApp)
-│   │   ├── gravatar.py             Gravatar email lookup
-│   │   └── holehe_lookup.py        Email-to-account discovery
-│   ├── insights/
-│   │   ├── orchestrator.py         Pass 1 + Pass 2 insight pipeline
-│   │   ├── timezone.py             Timezone estimation
-│   │   ├── network_geo.py          Geographic inference
-│   │   ├── cross_link.py           Cross-platform link detection
-│   │   ├── pattern_of_life.py      Activity pattern analysis
-│   │   ├── coordination.py         Coordination detection
-│   │   ├── risk.py                 Risk assessment
-│   │   ├── keywords.py             Keyword extraction
-│   │   ├── consistency.py          Identity consistency (Pass 2)
-│   │   └── distinctiveness.py      Username distinctiveness scoring
-│   ├── llm/
-│   │   ├── analyst.py              LLM intelligence analyst (Groq/Gemini)
-│   │   └── citation_check.py       Citation validation
-│   ├── reporting/
-│   │   ├── builder.py              Deterministic report assembly
-│   │   ├── collector.py            Case data loader for reports
-│   │   ├── confidence.py           Confidence band notes
-│   │   ├── limitations.py          Methodology limitations
-│   │   ├── references.py           Open-source reference builder
-│   │   ├── render_html.py          HTML report renderer
-│   │   └── render_pdf.py           PDF report renderer (ReportLab)
-│   └── validation/
-│       └── split_half_test.py      Split-half reliability testing
-│
-├── frontend/
-│   ├── src/
-│   │   ├── routes/                 TanStack Router file-based routes
-│   │   ├── features/               Auth, Dashboard, Settings, Errors
-│   │   ├── components/             Investigation graph, evidence panel,
-│   │   │                           timeline, reports, monitoring, OSINT,
-│   │   │                           correlation results, dorking, breach,
-│   │   │                           phone results, comment search, etc.
-│   │   ├── context/                Auth, theme, layout, search providers
-│   │   ├── stores/                 Zustand auth store
-│   │   └── lib/                    API client, utilities
-│   └── Dockerfile                  Multi-stage build (Node → nginx)
-│
-└── wa_sidecar/
-    ├── wa_sidecar.js               WhatsApp Web lookup service
-    └── Dockerfile                  Puppeteer + Chromium container
+POST   /api/cases/{case_id}/monitor-targets
+GET    /api/cases/{case_id}/monitor-targets
+GET    /api/monitor-targets/{target_id}
+PATCH  /api/monitor-targets/{target_id}
+POST   /api/monitor-targets/{target_id}/pause
+POST   /api/monitor-targets/{target_id}/resume
+DELETE /api/monitor-targets/{target_id}
+POST   /api/monitor-targets/{target_id}/check
+POST   /api/monitor-targets/{target_id}/reset-baseline
+GET    /api/monitor-targets/{target_id}/events
+GET    /api/alerts
+PATCH  /api/alerts/{alert_id}
+GET    /api/alerts/dashboard
+POST   /api/alerts/mark-all-read
 ```
 
 ---
 
 ## Confidence Scoring
 
-Correlation scores are mapped to confidence bands:
+Correlation scores from `correlator.py` are mapped to bands:
 
-| Band | Range | Meaning |
-|------|-------|---------|
-| Low | 0–40% | Weak or coincidental similarity |
-| Medium | 41–70% | Possible match, needs manual review |
-| High | 71–100% | Strong convergence across multiple signals |
+| Band   | Range   | Meaning                                   |
+| ------ | ------- | -------------------------------------------|
+| Low    | 0–40%   | Weak or coincidental similarity            |
+| Medium | 41–70%  | Possible match, needs manual review        |
+| High   | 71–100% | Strong convergence across multiple signals |
 
-Every score includes a per-signal breakdown explaining which signals contributed and which were unavailable (with weights renormalized accordingly).
+A detected hard link (e.g. an explicit cross-reference between accounts) raises the confidence floor to 80% regardless of the circumstantial score. Every result includes a per-signal breakdown of which evidence contributed.
 
 ---
 
 ## Ethical Constraints
 
 - **Public data only** — no authentication bypass, no private endpoints, no credential stuffing
-- **Instagram Stories permanently out of scope** — requires authenticated following relationship; no anonymous path exists
-- **AI recommends, investigator decides** — system surfaces evidence and confidence, never makes definitive identity claims
-- **All LLM output is citation-linked** — every claim references specific insight IDs; the LLM never introduces external knowledge
-- **Monitoring requires explicit enrollment** — no blanket surveillance; each target needs a stated reason and expiration date
+- **AI recommends, investigator decides** — the system surfaces evidence and confidence scores; it never asserts a definitive identity match
+- **All LLM output is citation-linked** — every claim in an intelligence briefing references specific insight IDs; the model is only given computed insights, never raw posts, and is instructed never to introduce outside knowledge
+- **Monitoring requires explicit enrollment** — each watchlist target needs a stated reason and expiration date; there is no blanket surveillance
